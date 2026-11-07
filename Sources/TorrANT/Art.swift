@@ -78,11 +78,11 @@ struct AntSketch: View {
 
                 if pose == .hero { bob(crumb(s)) }
                 if pose == .alert {
-                    Text("!").font(.custom("Caveat", size: 64 * s).weight(.bold)).foregroundStyle(Theme.honey)
+                    Text("!").font(.custom("Caveat", size: 64 * s).weight(.bold)).foregroundStyle(Theme.red)
                         .position(x: 298 * s, y: 34 * s)
                 }
                 if pose == .rest {
-                    Text("z z z").font(.custom("Caveat", size: 34 * s).weight(.bold)).foregroundStyle(Theme.honey)
+                    Text("z z z").font(.custom("Caveat", size: 34 * s).weight(.bold)).foregroundStyle(Theme.red)
                         .position(x: 276 * s, y: 60 * s)
                 }
             }
@@ -126,10 +126,10 @@ struct AntSketch: View {
     private func crumb(_ s: CGFloat) -> some View {
         let outline = SVG.path("M262 56 L292 40 L326 50 L334 82 L318 108 L284 114 L262 98 L254 76 Z")
         return ZStack {
-            shape(hatchLines(box: Self.box, angle: -30)).stroke(Theme.honey.opacity(0.7), lineWidth: 1.1 * s)
+            shape(hatchLines(box: Self.box, angle: -30)).stroke(Theme.red.opacity(0.7), lineWidth: 1.1 * s)
                 .mask(shape(outline).fill())
-            shape(outline).stroke(Theme.honey, style: StrokeStyle(lineWidth: 2.2 * s, lineJoin: .round))
-            shape(SVG.path("M290 60 L300 80 L292 96 M312 62 L318 84")).stroke(Theme.honey, style: StrokeStyle(lineWidth: 1.4 * s, lineCap: .round))
+            shape(outline).stroke(Theme.red, style: StrokeStyle(lineWidth: 2.2 * s, lineJoin: .round))
+            shape(SVG.path("M290 60 L300 80 L292 96 M312 62 L318 84")).stroke(Theme.red, style: StrokeStyle(lineWidth: 1.4 * s, lineCap: .round))
         }
     }
 
@@ -137,7 +137,7 @@ struct AntSketch: View {
 
     @ViewBuilder private func twitch<V: View>(_ v: V, anchor: UnitPoint, late: Bool) -> some View {
         if live {
-            v.phaseAnimator(late ? [0.0, -5, 2.5, -1.5] : [0.0, -6, 3, -2]) { c, a in
+            v.drawingGroup().phaseAnimator(late ? [0.0, -5, 2.5, -1.5] : [0.0, -6, 3, -2]) { c, a in
                 c.rotationEffect(.degrees(a), anchor: anchor)
             } animation: { a in
                 a == 0 ? .easeInOut(duration: late ? 3.1 : 2.8) : .easeInOut(duration: 0.24)
@@ -147,7 +147,7 @@ struct AntSketch: View {
 
     @ViewBuilder private func breathe<V: View>(_ v: V) -> some View {
         if live {
-            v.phaseAnimator([1.0, 1.018]) { c, k in
+            v.drawingGroup().phaseAnimator([1.0, 1.018]) { c, k in
                 c.scaleEffect(k, anchor: UnitPoint(x: 94 / 340, y: (150 + dy) / 250))
             } animation: { _ in .easeInOut(duration: 1.8) }
         } else { v }
@@ -155,7 +155,7 @@ struct AntSketch: View {
 
     @ViewBuilder private func bob<V: View>(_ v: V) -> some View {
         if live {
-            v.phaseAnimator([0.0, -1.5]) { c, y in c.offset(y: y) } animation: { _ in .easeInOut(duration: 1.8) }
+            v.drawingGroup().phaseAnimator([0.0, -1.5]) { c, y in c.offset(y: y) } animation: { _ in .easeInOut(duration: 1.8) }
         } else { v }
     }
 }
@@ -163,23 +163,23 @@ struct AntSketch: View {
 // MARK: - Little logo ant (title bar, progress bars)
 
 struct AntGlyph: View {
-    var color: Color = Theme.honey
+    var color: Color = Theme.red
     private static let box = CGSize(width: 32, height: 20)
-    private static let body: Path = {
+    static let bodyPath: Path = {
         var p = Path()
         p.addEllipse(in: CGRect(x: 1, y: 5.5, width: 12, height: 9))
         p.addEllipse(in: CGRect(x: 12.5, y: 7.4, width: 6, height: 5.2))
         p.addEllipse(in: CGRect(x: 18.6, y: 6.6, width: 6.8, height: 6.8))
         return p
     }()
-    private static let legs = SVG.path("M14 8l-3-6M16 8l1-6M17 8l4-5M14 12l-3 6M16 12l1 6M17 12l4 5M24 8l3-5M25 9l5-3")
+    static let legsPath = SVG.path("M14 8l-3-6M16 8l1-6M17 8l4-5M14 12l-3 6M16 12l1 6M17 12l4 5M24 8l3-5M25 9l5-3")
 
     var body: some View {
         GeometryReader { g in
             let s = g.size.width / Self.box.width
             ZStack {
-                ViewBoxShape(path: Self.body, box: Self.box).fill(color)
-                ViewBoxShape(path: Self.legs, box: Self.box)
+                ViewBoxShape(path: Self.bodyPath, box: Self.box).fill(color)
+                ViewBoxShape(path: Self.legsPath, box: Self.box)
                     .stroke(color, style: StrokeStyle(lineWidth: 1.6 * s, lineCap: .round))
             }
         }
@@ -202,7 +202,6 @@ struct AntProgress: View {
                 Capsule().fill(color).frame(width: max(w, progress > 0 ? 14 : 0))
                 AntGlyph(color: antColor).frame(width: 26, height: 16).offset(x: max(0, w - 6), y: 0)
             }
-            .animation(.easeOut(duration: 0.8), value: progress)
         }
         .frame(height: 14)
     }
@@ -252,16 +251,16 @@ struct Anthill: View {
             Canvas { ctx, size in
                 let s = size.width / Self.box.width
                 ctx.scaleBy(x: s, y: s)
-                ctx.fill(Self.mound, with: .color(Color(hex: 0x191410)))
+                ctx.fill(Self.mound, with: .color(Color(hex: 0x121212)))
                 var inner = ctx
                 inner.clip(to: Self.mound)
                 inner.translateBy(x: 0, y: top - 71)
                 let strata: [(String, UInt32)] = [
-                    ("M0 71 C 160 61, 300 79, 600 69 L600 300 L0 300 Z", 0xE25A2B),
-                    ("M0 90 C 140 84, 330 98, 600 88 L600 300 L0 300 Z", 0xC24A23),
-                    ("M0 108 C 180 101, 320 115, 600 106 L600 300 L0 300 Z", 0xA23E1E),
-                    ("M0 127 C 150 121, 360 133, 600 124 L600 300 L0 300 Z", 0x863319),
-                    ("M0 146 C 170 140, 330 152, 600 143 L600 300 L0 300 Z", 0x6A2814),
+                    ("M0 71 C 160 61, 300 79, 600 69 L600 300 L0 300 Z", 0xE5322D),
+                    ("M0 90 C 140 84, 330 98, 600 88 L600 300 L0 300 Z", 0xB8261F),
+                    ("M0 108 C 180 101, 320 115, 600 106 L600 300 L0 300 Z", 0x8E1D18),
+                    ("M0 127 C 150 121, 360 133, 600 124 L600 300 L0 300 Z", 0x6A1612),
+                    ("M0 146 C 170 140, 330 152, 600 143 L600 300 L0 300 Z", 0x4A100D),
                 ]
                 for (d, c) in strata { inner.fill(SVG.path(d), with: .color(Color(hex: c))) }
                 // grain
@@ -271,26 +270,26 @@ struct Anthill: View {
                     var x: CGFloat = row % 2 == 0 ? 1.5 : 5
                     while x < 600 {
                         inner.fill(Path(ellipseIn: CGRect(x: x - 0.9, y: y - 0.9, width: 1.8, height: 1.8)),
-                                   with: .color(Color(hex: 0xFFD7B0, alpha: 0.26)))
+                                   with: .color(Color(hex: 0xFFC9BF, alpha: 0.22)))
                         x += 7
                     }
                     y += 6; row += 1
                 }
                 // tunnels and chambers
-                let dark = Color(hex: 0x14100C)
+                let dark = Color(hex: 0x0A0A0A)
                 inner.stroke(SVG.path("M300 236 C 300 190, 262 146, 250 132 S 270 108, 236 98"), with: .color(dark.opacity(0.85)), style: StrokeStyle(lineWidth: 4, lineCap: .round))
                 inner.stroke(SVG.path("M300 236 C 312 190, 352 144, 360 126 S 336 104, 372 92"), with: .color(dark.opacity(0.85)), style: StrokeStyle(lineWidth: 4, lineCap: .round))
                 for r in [CGRect(x: 216, y: 91, width: 40, height: 14), CGRect(x: 354, y: 85.5, width: 36, height: 13),
                           CGRect(x: 234, y: 126, width: 32, height: 12), CGRect(x: 274, y: 150, width: 52, height: 16)] {
                     inner.fill(Path(ellipseIn: r), with: .color(dark))
                 }
-                inner.stroke(SVG.path("M150 71 C 250 63, 350 77, 450 69"), with: .color(Theme.honey.opacity(0.9)), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                inner.stroke(SVG.path("M150 71 C 250 63, 350 77, 450 69"), with: .color(Theme.red.opacity(0.9)), style: StrokeStyle(lineWidth: 2, lineCap: .round))
 
                 ctx.stroke(Self.mound, with: .color(Theme.lineSoft), style: StrokeStyle(lineWidth: 1.5, dash: [5, 6]))
                 ctx.stroke(SVG.path("M-40 168 L640 168"), with: .color(Theme.line), style: StrokeStyle(lineWidth: 3, lineCap: .round))
             }
             MarchingTrail(base: trails, box: Self.box, phase: march)
-                .fill(Theme.honey)
+                .fill(Theme.red)
         }
         .aspectRatio(Self.box.width / Self.box.height, contentMode: .fit)
         .onAppear {
@@ -349,7 +348,7 @@ struct AppIconArt: View {
         ZStack {
             RoundedRectangle(cornerRadius: 185, style: .continuous)
                 .fill(Theme.surface)
-                .overlay(RoundedRectangle(cornerRadius: 185, style: .continuous).strokeBorder(Theme.honey, lineWidth: 22))
+                .overlay(RoundedRectangle(cornerRadius: 185, style: .continuous).strokeBorder(Theme.red, lineWidth: 22))
                 .frame(width: 824, height: 824)
             AntSketch(pose: .hero, guides: false, animated: false)
                 .frame(width: 860)

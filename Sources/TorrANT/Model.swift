@@ -33,8 +33,22 @@ struct Crumb: Identifiable, Hashable {
     let isMetadata: Bool
     let followedBy: [String]
     let source: String?
+    // When this reading arrived, and the speed one reading earlier, so the
+    // screen can glide between readings instead of jumping.
+    var sampledAt = Date()
+    var prevDown = 0
 
     var id: String { gid }
+
+    /// Same download, same numbers = no redraw (the reading time doesn't count).
+    static func == (a: Crumb, b: Crumb) -> Bool {
+        a.gid == b.gid && a.state == b.state && a.done == b.done && a.total == b.total &&
+        a.down == b.down && a.up == b.up && a.uploaded == b.uploaded && a.connections == b.connections &&
+        a.seeders == b.seeders && a.name == b.name && a.errorMessage == b.errorMessage &&
+        a.isMetadata == b.isMetadata && a.files == b.files && a.dir == b.dir && a.prevDown == b.prevDown
+    }
+    func hash(into h: inout Hasher) { h.combine(gid) }
+
     var progress: Double { total > 0 ? min(1, Double(done) / Double(total)) : 0 }
     var eta: TimeInterval? { down > 0 && total > done ? Double(total - done) / Double(down) : nil }
     var ratio: Double { done > 0 ? Double(uploaded) / Double(done) : 0 }

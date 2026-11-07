@@ -27,7 +27,7 @@ struct SwarmView: View {
         VStack(spacing: 14) {
             AntSketch(pose: .hero).frame(width: 260)
             Text("It's home, or it's gone.").font(Theme.display(24))
-            Button("Back to the colony") { dismiss() }.buttonStyle(HoneyButtonStyle())
+            Button("Back to the colony") { dismiss() }.buttonStyle(RedButtonStyle())
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -43,23 +43,26 @@ struct SwarmView: View {
                 }
                 Spacer()
                 if c.state == .paused {
-                    Button("Wake the ants") { Task { await colony.resume(c) } }.buttonStyle(GhostButtonStyle(tint: Theme.honey))
+                    Button("Wake the ants") { Task { await colony.resume(c) } }.buttonStyle(GhostButtonStyle(tint: Theme.red))
                 } else {
-                    Button("Let the ants rest") { Task { await colony.rest(c) } }.buttonStyle(GhostButtonStyle(tint: Theme.honey))
+                    Button("Let the ants rest") { Task { await colony.rest(c) } }.buttonStyle(GhostButtonStyle(tint: Theme.red))
                 }
                 Button("Show in Finder") { colony.reveal(c.homePath) }.buttonStyle(GhostButtonStyle())
-                Button("Done") { dismiss() }.buttonStyle(HoneyButtonStyle()).keyboardShortcut(.cancelAction)
+                Button("Done") { dismiss() }.buttonStyle(RedButtonStyle()).keyboardShortcut(.cancelAction)
             }
 
             HStack(alignment: .top, spacing: 16) {
                 VStack(spacing: 14) {
                     Card(radius: 20) {
                         VStack(alignment: .leading, spacing: 10) {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text("Crumbs carried home · \(Fmt.bytes(c.done)) of \(c.total > 0 ? Fmt.bytes(c.total) : "?")")
-                                    .font(Theme.display(18))
-                                Spacer()
-                                Text("\(Int(c.progress * 100))%").font(Theme.display(32)).foregroundStyle(Theme.swarmText)
+                            EveryFrame(active: c.isMoving, fps: 15) { now in
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text("Crumbs carried home · \(Fmt.liveSize(c.liveDone(now))) of \(c.total > 0 ? Fmt.liveSize(Double(c.total)) : "?")")
+                                        .font(Theme.display(18)).monospacedDigit()
+                                    Spacer()
+                                    Text(String(format: "%.1f%%", c.liveProgress(now) * 100))
+                                        .font(Theme.display(32)).monospacedDigit().foregroundStyle(Theme.swarmText)
+                                }
                             }
                             if c.state == .paused {
                                 HStack { Spacer(); AntSketch(pose: .rest).frame(height: 170); Spacer() }
@@ -69,16 +72,18 @@ struct SwarmView: View {
                             HStack {
                                 Text("The hill rises as pieces arrive. Dashed outline = the finished hill.")
                                 Spacer()
-                                Text("\(c.connections) ants on the trail").foregroundStyle(Theme.honey).fontWeight(.semibold)
+                                Text("\(c.connections) ants on the trail").foregroundStyle(Theme.red).fontWeight(.semibold)
                             }
                             .font(Theme.body(13)).foregroundStyle(Theme.muted)
                         }
                     }
-                    HStack(spacing: 12) {
-                        mini("Coming home", Fmt.speed(c.down), honey: true)
-                        mini("Sharing back", Fmt.speed(c.up))
-                        mini(c.kind == .swarm ? "Ants helping" : "Ants pulling", c.kind == .swarm ? "\(c.connections) · \(c.seeders) full" : "\(c.connections)")
-                        mini("Home in", c.state == .seeding ? "Home ✓" : Fmt.eta(c.eta))
+                    EveryFrame(active: c.isMoving, fps: 15) { now in
+                        HStack(spacing: 12) {
+                            mini("Coming home", Fmt.liveSpeed(c.liveDown(now)), honey: true)
+                            mini("Sharing back", Fmt.speed(c.up))
+                            mini(c.kind == .swarm ? "Ants helping" : "Ants pulling", c.kind == .swarm ? "\(c.connections) · \(c.seeders) full" : "\(c.connections)")
+                            mini("Home in", c.state == .seeding ? "Home ✓" : Fmt.clock(c.liveEta(now)))
+                        }
                     }
                     filesCard(c)
                 }
@@ -92,7 +97,7 @@ struct SwarmView: View {
         Card(radius: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(label).font(Theme.body(13)).foregroundStyle(Theme.muted)
-                Text(value).font(Theme.display(22)).foregroundStyle(honey ? Theme.honey : Theme.text)
+                Text(value).font(Theme.display(22)).monospacedDigit().foregroundStyle(honey ? Theme.red : Theme.text)
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
         }
@@ -139,9 +144,9 @@ struct SwarmView: View {
     private func seg(_ t: String, on: Bool, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(t).font(Theme.body(12, .semibold))
-                .foregroundStyle(on ? Theme.soil : Theme.muted)
+                .foregroundStyle(on ? Color.white : Theme.muted)
                 .padding(.horizontal, 12).frame(height: 28)
-                .background(Capsule().fill(on ? Theme.honey : .clear))
+                .background(Capsule().fill(on ? Theme.redFill : .clear))
         }
         .buttonStyle(.plain)
     }
@@ -247,7 +252,7 @@ struct SendSheet: View {
                                 }
                             }
                             .toggleStyle(.checkbox)
-                            .tint(Theme.honey)
+                            .tint(Theme.red)
                             .padding(.horizontal, 14).padding(.vertical, 9)
                             .background(RoundedRectangle(cornerRadius: 12).fill(picks.contains(f.index) ? Theme.surface2 : .clear))
                         }
@@ -299,7 +304,7 @@ struct SendSheet: View {
                 Button("Send the swarm") {
                     Task { await Colony.shared.confirm(pending, selected: picks, dir: dir, startNow: startNow) }
                 }
-                .buttonStyle(HoneyButtonStyle(big: true))
+                .buttonStyle(RedButtonStyle(big: true))
                 .keyboardShortcut(.defaultAction)
                 .disabled(picks.isEmpty)
             }
@@ -314,9 +319,9 @@ struct SendSheet: View {
     private func whenButton(_ title: String, _ value: Bool) -> some View {
         Button { startNow = value } label: {
             Text(title).font(Theme.body(13, .semibold))
-                .foregroundStyle(startNow == value ? Theme.soil : Theme.muted)
+                .foregroundStyle(startNow == value ? Color.white : Theme.muted)
                 .padding(.horizontal, 14).frame(height: 32)
-                .background(Capsule().fill(startNow == value ? Theme.honey : .clear))
+                .background(Capsule().fill(startNow == value ? Theme.redFill : .clear))
         }
         .buttonStyle(.plain)
     }

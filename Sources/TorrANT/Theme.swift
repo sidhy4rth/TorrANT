@@ -1,26 +1,30 @@
 import SwiftUI
 import CoreText
 
-/// Colours and type from the TorrANT mockups (dark ant colony).
+/// Colours and type: black & red, like an ant.
 enum Theme {
-    static let soil = Color(hex: 0x14100C)
-    static let deep = Color(hex: 0x0E0B08)
-    static let surface = Color(hex: 0x1F1913)
-    static let surface2 = Color(hex: 0x2A221A)
-    static let line = Color(hex: 0x3A2F24)
-    static let lineSoft = Color(hex: 0x5A4A38)
-    static let text = Color(hex: 0xF5EDE1)
-    static let muted = Color(hex: 0xCBBFAE)
+    static let soil = Color(hex: 0x0A0A0A)
+    static let deep = Color(hex: 0x050505)
+    static let surface = Color(hex: 0x141414)
+    static let surface2 = Color(hex: 0x1C1C1C)
+    static let line = Color(hex: 0x262626)
+    static let lineSoft = Color(hex: 0x3A3A3A)
+    static let sidebar = Color(hex: 0x0D0D0D)
+    static let text = Color(hex: 0xF4F1EE)
+    static let muted = Color(hex: 0xA9A39E)
     static let chalk = Color(hex: 0xEFE4D2)
-    static let honey = Color(hex: 0xFFB627)
+    /// Accent for text, icons and lines on black.
+    static let red = Color(hex: 0xFF4D40)
+    /// Fill behind white button text (passes contrast).
+    static let redFill = Color(hex: 0xD7261F)
 
-    static let swarm = Color(hex: 0xE8572A)
-    static let swarmText = Color(hex: 0xFF8A5E)
-    static let swarmTint = Color(hex: 0x3A1D14)
-    static let crumb = Color(hex: 0x3FB8A8)
-    static let crumbText = Color(hex: 0x6FD9C9)
-    static let crumbTint = Color(hex: 0x123430)
-    static let rest = Color(hex: 0x6B6157)
+    static let swarm = Color(hex: 0xE5322D)
+    static let swarmText = Color(hex: 0xFF4D40)
+    static let swarmTint = Color(hex: 0x3A0E0C)
+    static let crumb = Color(hex: 0xE8E0D4)
+    static let crumbText = Color(hex: 0xE8E0D4)
+    static let crumbTint = Color(hex: 0x2A2622)
+    static let rest = Color(hex: 0x5A5551)
     static let safe = Color(hex: 0x8BD46E)
     static let poison = Color(hex: 0x9B6BE8)
 
@@ -63,7 +67,7 @@ struct SoilBackground: View {
                 var x: CGFloat = 2
                 while x < size.width {
                     ctx.fill(Path(ellipseIn: CGRect(x: x - 1.2, y: y - 1.2, width: 2.4, height: 2.4)),
-                             with: .color(Color(hex: 0x211A14)))
+                             with: .color(Color(hex: 0x161616)))
                     x += step
                 }
                 y += step
@@ -100,15 +104,15 @@ struct Pill: View {
     }
 }
 
-struct HoneyButtonStyle: ButtonStyle {
+struct RedButtonStyle: ButtonStyle {
     var big = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(big ? Theme.display(17) : Theme.body(14, .bold))
-            .foregroundStyle(Theme.soil)
+            .foregroundStyle(Color.white)
             .padding(.horizontal, big ? 24 : 16)
             .frame(height: big ? 46 : 36)
-            .background(Capsule().fill(Theme.honey.opacity(configuration.isPressed ? 0.8 : 1)))
+            .background(Capsule().fill(Theme.redFill.opacity(configuration.isPressed ? 0.8 : 1)))
             .contentShape(Capsule())
     }
 }

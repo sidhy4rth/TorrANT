@@ -14,6 +14,10 @@ final class Colony {
     var down = 0
     var up = 0
     var antsOut = 0
+    var prevDown = 0
+    var prevUp = 0
+    var speedAt = Date()
+    var sessionBytes: Int64 = 0
     var online = false
     var problem: String?
     var spotted: String?
@@ -41,6 +45,7 @@ final class Colony {
     @ObservationIgnored private var booted = false
     @ObservationIgnored private var bootTime = Date()
     @ObservationIgnored private var lastState: [String: CrumbState] = [:]
+    @ObservationIgnored private var lastSample: [String: Crumb] = [:]
     @ObservationIgnored private var homeLogged: Set<String> = []
     @ObservationIgnored private var lastClip = NSPasteboard.general.changeCount
     @ObservationIgnored private var seenClips: Set<String> = []
@@ -77,7 +82,7 @@ final class Colony {
     private func pollForever() async {
         while true {
             await refresh()
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .milliseconds(250))
         }
     }
 
@@ -91,11 +96,16 @@ final class Colony {
             let s = try await aria.call("aria2.tellStopped", [0, 500, keys]) as? [[String: Any]] ?? []
             let g = try await aria.call("aria2.getGlobalStat") as? [String: Any] ?? [:]
             apply(all: (a + w + s).compactMap(Crumb.init))
-            down = Int(g["downloadSpeed"] as? String ?? "") ?? 0
-            up = Int(g["uploadSpeed"] as? String ?? "") ?? 0
-            if !online { say("Colony online") }
-            online = true
-            problem = nil
+            // Only touch observed values when they change, so an idle window
+            // doesn't redraw four times a second.
+            let newDown = Int(g["downloadSpeed"] as? String ?? "") ?? 0
+            let newUp = Int(g["uploadSpeed"] as? String ?? "") ?? 0
+            if newDown != down || newUp != up || down != prevDown || up != prevUp {
+                prevDown = down; prevUp = up; speedAt = Date()
+                down = newDown; up = newUp
+            }
+            if !online { say("Colony online"); online = true }
+            if problem != nil { problem = nil }
             if !restored { restored = true; await restoreSwarms() }
         } catch {
             // The engine needs a moment to start listening.
@@ -111,7 +121,14 @@ final class Colony {
         var newSeeding: [Crumb] = []
         var ants = 0
 
-        for c in all {
+        for var c in all {
+            if let old = lastSample[c.gid] {
+                c.prevDown = old.down
+                if c.done > old.done { sessionBytes += c.done - old.done }
+            } else {
+                c.prevDown = c.down
+            }
+            lastSample[c.gid] = c
             let before = lastState[c.gid]
             lastState[c.gid] = c.state
             if c.state == .removed { continue }
@@ -149,12 +166,13 @@ final class Colony {
             }
         }
         let order: [CrumbState: Int] = [.active: 0, .waiting: 1, .paused: 2, .error: 3]
-        trail = newTrail.enumerated().sorted {
+        let sorted = newTrail.enumerated().sorted {
             let a = order[$0.element.state] ?? 9, b = order[$1.element.state] ?? 9
             return a == b ? $0.offset < $1.offset : a < b
         }.map(\.element)
-        seeding = newSeeding
-        antsOut = ants
+        if sorted != trail { trail = sorted }
+        if newSeeding != seeding { seeding = newSeeding }
+        if ants != antsOut { antsOut = ants }
     }
 
     private func bringHome(_ c: Crumb) {

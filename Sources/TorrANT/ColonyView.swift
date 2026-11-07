@@ -21,7 +21,7 @@ struct ColonyView: View {
         .onDrop(of: [.fileURL, .url, .plainText], isTargeted: $dropTargeted, perform: handleDrop)
         .overlay {
             if dropTargeted {
-                RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.honey, style: StrokeStyle(lineWidth: 3, dash: [10, 8]))
+                RoundedRectangle(cornerRadius: 18).strokeBorder(Theme.red, style: StrokeStyle(lineWidth: 3, dash: [10, 8]))
                     .padding(10).allowsHitTesting(false)
             }
         }
@@ -35,8 +35,8 @@ struct ColonyView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            AntGlyph(color: Theme.honey).frame(width: 32)
-            (Text("Torr") + Text("ANT").foregroundColor(Theme.honey))
+            AntGlyph(color: Theme.red).frame(width: 32)
+            (Text("Torr") + Text("ANT").foregroundColor(Theme.red))
                 .font(Theme.display(24))
             Text("No crumb too big.").font(Theme.body(14)).foregroundStyle(Theme.muted)
             Spacer()
@@ -68,9 +68,17 @@ struct ColonyView: View {
             addBar
             if let s = colony.spotted { SpottedBanner(link: s) }
             HStack(spacing: 14) {
-                stat("Coming home", Fmt.speedParts(colony.down), honey: true)
-                stat("Sharing with other colonies", Fmt.speedParts(colony.up))
-                stat("Ants at work", ("\(colony.antsOut)", ""))
+                odoStat("Coming home", color: Theme.red) { Fmt.odoSpeed(Colony.shared.liveDown($0)) }
+                odoStat("Sharing with other colonies", color: Theme.text) { Fmt.odoSpeed(Colony.shared.liveUp($0)) }
+                Card {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Carried home this session").font(Theme.body(14)).foregroundStyle(Theme.muted)
+                        LiveLabel(live: colony.anythingMoving, font: LiveFont.display(38), color: Theme.text) {
+                            Fmt.liveSize(Colony.shared.liveSession($0))
+                        }
+                        .frame(height: 46)
+                    }
+                }
             }
             HStack(alignment: .firstTextBaseline) {
                 Text("On the trail").font(Theme.display(22))
@@ -113,7 +121,7 @@ struct ColonyView: View {
             .foregroundStyle(Theme.muted)
             .help("Open a .torrent file")
             Button("Send the ants", action: sendInput)
-                .buttonStyle(HoneyButtonStyle(big: true))
+                .buttonStyle(RedButtonStyle(big: true))
                 .keyboardShortcut(.return, modifiers: [.command])
         }
         .padding(.leading, 22)
@@ -123,16 +131,12 @@ struct ColonyView: View {
         .overlay(Capsule().strokeBorder(Theme.lineSoft, style: StrokeStyle(lineWidth: 2, dash: [7, 6])))
     }
 
-    private func stat(_ label: String, _ value: (String, String), honey: Bool = false) -> some View {
+    private func odoStat(_ label: String, color: Color, _ value: @escaping (Date) -> (Double, String)) -> some View {
         Card {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(label).font(Theme.body(14)).foregroundStyle(Theme.muted)
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(value.0).font(Theme.display(38))
-                    Text(value.1).font(Theme.display(17))
-                }
-                .foregroundStyle(honey ? Theme.honey : Theme.text)
-                .contentTransition(.numericText())
+                OdometerLayer(live: colony.anythingMoving, size: 38, color: color, value: value)
+                    .frame(height: 46)
             }
         }
     }
@@ -198,7 +202,7 @@ struct ColonyView: View {
             }
             Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Colony chatter").font(Theme.body(14, .bold)).foregroundStyle(Theme.honey)
+                Text("Colony chatter").font(Theme.body(14, .bold)).foregroundStyle(Theme.red)
                 ForEach(colony.chatter.prefix(4)) { m in
                     Text("\(Fmt.clock(m.time)) · \(m.text)").font(Theme.body(13)).foregroundStyle(Theme.muted).lineLimit(1)
                 }
@@ -210,7 +214,7 @@ struct ColonyView: View {
         .padding(20)
         .frame(width: 330)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color(hex: 0x1A1510))
+        .background(Theme.sidebar)
         .overlay(alignment: .leading) { Rectangle().fill(Theme.surface2).frame(width: 1) }
     }
 
@@ -266,53 +270,58 @@ struct TrailRow: View {
 
     private var look: (pill: String, fg: Color, bg: Color, bar: Color, ant: Color) {
         switch c.state {
-        case .paused: return ("RESTING", Theme.muted, Color(hex: 0x2E2A25), Theme.rest, Color(hex: 0x8E8478))
+        case .paused: return ("RESTING", Theme.muted, Color(hex: 0x222222), Theme.rest, Color(hex: 0x7A7470))
         case .error: return ("STUCK", Color(hex: 0xD9BDFF), Color(hex: 0x2E2236), Theme.poison, Color(hex: 0xD9BDFF))
         default:
             return c.kind == .swarm
                 ? ("SWARM", Theme.swarmText, Theme.swarmTint, Theme.swarm, Theme.swarmText)
-                : ("CRUMB", Theme.crumbText, Theme.crumbTint, Theme.crumb, Theme.crumbText)
+                : ("CRUMB", Theme.crumbText, Theme.crumbTint, Theme.crumb, Color.white)
         }
     }
 
-    private var meta: String {
-        let size = c.total > 0 ? Fmt.bytes(c.total) : "size unknown"
+    private func meta(_ now: Date) -> String {
         if c.isMetadata { return "Finding the swarm…" }
+        let total = c.total > 0 ? Fmt.liveSize(Double(c.total)) : "size unknown"
+        let ants = c.kind == .swarm ? "\(c.connections) ants" : "\(c.connections) ants pulling"
         switch c.state {
-        case .paused: return "Ants resting · picks up where it stopped"
-        case .waiting: return "Waiting in line · \(size)"
+        case .paused: return "Ants resting · \(Fmt.liveSize(Double(c.done))) of \(total)"
+        case .waiting: return "Waiting in line · \(total)"
         case .error: return c.errorMessage ?? "Something went wrong"
-        default:
-            return c.kind == .swarm ? "\(c.connections) ants marching · \(size)" : "\(c.connections) ants dragging it home · \(size)"
+        default: return "\(ants) · \(Fmt.liveSize(c.liveDone(now))) of \(total)"
         }
     }
 
-    private var etaText: String {
+    private func etaText(_ now: Date) -> String {
         switch c.state {
         case .paused: return "zzz"
         case .error: return "!"
         case .waiting: return "—"
-        default: return Fmt.eta(c.eta)
+        default: return Fmt.clock(c.liveEta(now))
         }
     }
 
     var body: some View {
         HStack(spacing: 16) {
             Pill(text: look.pill, fg: look.fg, bg: look.bg).frame(width: 96, alignment: .leading)
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 12) {
                     Text(c.name).font(Theme.body(15, .semibold)).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 8)
-                    Text(meta).font(Theme.body(14)).foregroundStyle(Theme.muted).lineLimit(1)
+                    LiveLabel(live: c.isMoving, font: LiveFont.body(14), color: Theme.muted, align: .right) { meta($0) }
+                        .frame(width: 300, height: 20)
                 }
-                AntProgress(progress: c.progress, color: look.bar, antColor: look.ant)
+                LiveBarLayer(live: c.isMoving, color: look.bar, ant: look.ant) { c.liveProgress($0) }
+                    .frame(height: 18)
             }
             VStack(alignment: .trailing, spacing: 2) {
-                Text(etaText).font(Theme.display(21))
-                Text(c.state == .active ? Fmt.speed(c.down) : (c.state == .paused ? "paused" : " "))
-                    .font(Theme.body(13)).foregroundStyle(Theme.muted)
+                LiveLabel(live: c.isMoving, font: LiveFont.display(21), color: Theme.text, align: .right) { etaText($0) }
+                    .frame(height: 26)
+                LiveLabel(live: c.isMoving, font: LiveFont.body(13, 600), color: c.state == .active ? look.fg : Theme.muted, align: .right) {
+                    c.state == .active ? Fmt.liveSpeed(c.liveDown($0)) : (c.state == .paused ? "paused" : " ")
+                }
+                .frame(height: 18)
             }
-            .frame(width: 96, alignment: .trailing)
+            .frame(width: 104)
             controls
         }
         .padding(.horizontal, 16)
@@ -411,7 +420,7 @@ struct SpottedBanner: View {
             }
             Spacer()
             Button("Leave it") { Colony.shared.spotted = nil }.buttonStyle(GhostButtonStyle())
-            Button("Grab it") { Task { await Colony.shared.grabSpotted() } }.buttonStyle(HoneyButtonStyle())
+            Button("Grab it") { Task { await Colony.shared.grabSpotted() } }.buttonStyle(RedButtonStyle())
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

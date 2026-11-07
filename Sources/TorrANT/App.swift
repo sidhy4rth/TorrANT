@@ -88,11 +88,13 @@ struct AntCam: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                AntGlyph(color: Theme.honey).frame(width: 34)
+                AntGlyph(color: Theme.red).frame(width: 34)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Ant Cam").font(Theme.display(19))
-                    Text("\(colony.trail.filter { $0.state == .active }.count) on the trail · \(Fmt.speed(colony.down)) coming home")
-                        .font(Theme.body(13)).foregroundStyle(Theme.muted)
+                    EveryFrame(active: colony.anythingMoving, fps: 15) { now in
+                        Text("\(colony.trail.filter { $0.state == .active }.count) on the trail · \(Fmt.liveSpeed(colony.liveDown(now))) coming home")
+                            .font(Theme.body(13)).foregroundStyle(Theme.muted).monospacedDigit()
+                    }
                 }
                 Spacer()
             }
@@ -104,7 +106,7 @@ struct AntCam: View {
                     TextField("", text: $input, prompt: Text("Paste a link or magnet").foregroundColor(Theme.muted))
                         .textFieldStyle(.plain).font(Theme.body(14))
                         .onSubmit(send)
-                    Button("Send", action: send).buttonStyle(HoneyButtonStyle())
+                    Button("Send", action: send).buttonStyle(RedButtonStyle())
                 }
                 .padding(.leading, 14).padding(.trailing, 4).padding(.vertical, 4)
                 .background(Capsule().fill(Theme.surface))
@@ -118,7 +120,7 @@ struct AntCam: View {
                             Text(s).font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1).truncationMode(.middle)
                         }
                         Spacer()
-                        Button("Grab") { Task { await colony.grabSpotted() } }.buttonStyle(HoneyButtonStyle())
+                        Button("Grab") { Task { await colony.grabSpotted() } }.buttonStyle(RedButtonStyle())
                     }
                 }
 
@@ -127,24 +129,27 @@ struct AntCam: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 18)
                 }
                 ForEach(colony.trail.prefix(4)) { c in
-                    VStack(alignment: .leading, spacing: 7) {
-                        HStack {
-                            Text(c.name).font(Theme.body(14, .semibold)).lineLimit(1).truncationMode(.middle)
-                            Spacer()
-                            Text(c.state == .paused ? "zzz" : Fmt.eta(c.eta)).font(Theme.body(14, .bold))
-                        }
-                        Capsule().fill(Theme.deep).frame(height: 10)
-                            .overlay(alignment: .leading) {
-                                GeometryReader { g in
-                                    Capsule().fill(c.state == .paused ? Theme.rest : (c.kind == .swarm ? Theme.swarm : Theme.crumb))
-                                        .frame(width: g.size.width * c.progress)
-                                }
+                    EveryFrame(active: c.isMoving, fps: 15) { now in
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack {
+                                Text(c.name).font(Theme.body(14, .semibold)).lineLimit(1).truncationMode(.middle)
+                                Spacer()
+                                Text(c.state == .paused ? "zzz" : Fmt.clock(c.liveEta(now))).font(Theme.body(14, .bold)).monospacedDigit()
                             }
-                        HStack {
-                            Text(c.kind == .swarm ? "SWARM" : "CRUMB").font(Theme.body(12, .bold))
-                                .foregroundStyle(c.kind == .swarm ? Theme.swarmText : Theme.crumbText)
-                            Spacer()
-                            Text("\(c.connections) ants · \(Fmt.speed(c.down))").font(Theme.body(12)).foregroundStyle(Theme.muted)
+                            Capsule().fill(Theme.deep).frame(height: 10)
+                                .overlay(alignment: .leading) {
+                                    GeometryReader { g in
+                                        Capsule().fill(c.state == .paused ? Theme.rest : (c.kind == .swarm ? Theme.swarm : Theme.crumb))
+                                            .frame(width: g.size.width * c.liveProgress(now))
+                                    }
+                                }
+                            HStack {
+                                Text(c.kind == .swarm ? "SWARM" : "CRUMB").font(Theme.body(12, .bold))
+                                    .foregroundStyle(c.kind == .swarm ? Theme.swarmText : Theme.crumbText)
+                                Spacer()
+                                Text("\(c.connections) ants · \(Fmt.liveSpeed(c.liveDown(now)))").font(Theme.body(12)).monospacedDigit()
+                                    .foregroundStyle(Theme.muted)
+                            }
                         }
                     }
                 }
@@ -172,7 +177,7 @@ struct AntCam: View {
                         openWindow(id: "colony")
                         NSApp.activate()
                     }
-                    .buttonStyle(HoneyButtonStyle()).frame(maxWidth: .infinity)
+                    .buttonStyle(RedButtonStyle()).frame(maxWidth: .infinity)
                 }
             }
             .padding(16)
