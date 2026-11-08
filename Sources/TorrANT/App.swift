@@ -217,6 +217,26 @@ struct SettingsView: View {
                     }
                 }
             }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Google Drive folder").font(Theme.body(14, .semibold))
+                HStack {
+                    Text(colony.driveDir?.path ?? "Google Drive isn't installed yet")
+                        .font(Theme.body(13)).foregroundStyle(Theme.muted).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    if colony.driveDirPath != nil {
+                        Button("Auto") { colony.driveDirPath = nil }
+                            .help("Use the TorrANT folder in Google Drive")
+                    }
+                    Button("Change…") {
+                        let p = NSOpenPanel(); p.canChooseDirectories = true; p.canChooseFiles = false
+                        p.canCreateDirectories = true
+                        p.directoryURL = colony.driveDir ?? Colony.findDrive()
+                        if p.runModal() == .OK, let u = p.url { colony.driveDirPath = u.path }
+                    }
+                }
+                Text("Hover a finished download and press the cloud to move it there.")
+                    .font(Theme.body(12)).foregroundStyle(Theme.muted)
+            }
             Toggle("Watch the clipboard for crumbs (download links and magnets)", isOn: Binding(
                 get: { colony.watchClipboard }, set: { colony.watchClipboard = $0 }))
                 .toggleStyle(.checkbox)

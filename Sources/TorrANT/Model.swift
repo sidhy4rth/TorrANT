@@ -131,7 +131,7 @@ struct Crumb: Identifiable, Hashable {
 struct HillItem: Codable, Identifiable, Hashable {
     var id = UUID()
     let name: String
-    let path: String
+    var path: String
     let size: Int64
     let kind: Kind
     let date: Date

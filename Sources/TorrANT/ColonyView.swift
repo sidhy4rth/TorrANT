@@ -383,6 +383,7 @@ struct HillRow: View {
             Circle().fill(item.kind == .swarm ? Theme.swarm : Theme.crumb).frame(width: 10, height: 10)
             Text(item.name).font(Theme.body(14, .medium)).lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 4)
+            driveBadge
             Text(Fmt.when(item.date)).font(Theme.body(12)).foregroundStyle(Theme.muted)
         }
         .padding(.horizontal, 14)
@@ -396,8 +397,36 @@ struct HillRow: View {
         .contextMenu {
             Button("Open") { Colony.shared.open(item) }
             Button("Show in Finder") { Colony.shared.reveal(item.path) }
+            if !Colony.shared.isOnDrive(item) && !Colony.shared.sending.contains(item.id) {
+                Button("Move to Google Drive") { Task { await Colony.shared.moveToDrive(item) } }
+            }
             Divider()
             Button("Forget it") { Colony.shared.forget(item) }
+        }
+    }
+
+    @ViewBuilder private var driveBadge: some View {
+        let colony = Colony.shared
+        if colony.sending.contains(item.id) {
+            ProgressView().controlSize(.small)
+                .help("Moving to Google Drive…")
+                .accessibilityLabel("Moving to Google Drive")
+        } else if colony.isOnDrive(item) {
+            Image(systemName: "icloud.fill").font(.system(size: 12))
+                .foregroundStyle(Theme.muted)
+                .help("On Google Drive")
+                .accessibilityLabel("On Google Drive")
+        } else {
+            Button { Task { await colony.moveToDrive(item) } } label: {
+                Image(systemName: "icloud.and.arrow.up").font(.system(size: 12, weight: .bold))
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(Theme.surface))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Theme.text)
+            .opacity(hover ? 1 : 0)
+            .help("Move to Google Drive")
+            .accessibilityLabel("Move to Google Drive")
         }
     }
 }

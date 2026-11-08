@@ -36,6 +36,19 @@ final class Colony {
         }
     }
 
+    /// Google Drive folder picked in Settings (nil = find it automatically).
+    var driveDirPath: String? = UserDefaults.standard.string(forKey: "driveDir") {
+        didSet { UserDefaults.standard.set(driveDirPath, forKey: "driveDir") }
+    }
+    var sending: Set<UUID> = []      // hill items on their way to Google Drive
+
+    /// Where "Move to Google Drive" puts things: the folder picked in Settings,
+    /// or a TorrANT folder in the first Google Drive account on this Mac.
+    var driveDir: URL? {
+        if let p = driveDirPath { return URL(fileURLWithPath: p) }
+        return Colony.findDrive()?.appendingPathComponent("TorrANT", isDirectory: true)
+    }
+
     var watchClipboard: Bool {
         get { UserDefaults.standard.object(forKey: "watchClipboard") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "watchClipboard") }
@@ -436,6 +449,82 @@ final class Colony {
     func forget(_ item: HillItem) {
         hill.removeAll { $0.id == item.id }
         saveHill()
+    }
+
+    // MARK: Google Drive
+
+    /// "My Drive" of the first Google Drive for desktop account, if it's installed.
+    static func findDrive() -> URL? {
+        let fm = FileManager.default
+        let cloud = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/CloudStorage", isDirectory: true)
+        let names = (try? fm.contentsOfDirectory(atPath: cloud.path)) ?? []
+        for n in names.sorted() where n.hasPrefix("GoogleDrive-") {
+            let my = cloud.appendingPathComponent(n).appendingPathComponent("My Drive", isDirectory: true)
+            if fm.fileExists(atPath: my.path) { return my }
+        }
+        return nil
+    }
+
+    func isOnDrive(_ item: HillItem) -> Bool {
+        if let d = driveDir, item.path.hasPrefix(d.path + "/") { return true }
+        return item.path.contains("/Library/CloudStorage/GoogleDrive-")
+    }
+
+    /// Moves a finished download into Google Drive, then points the Anthill at its new home.
+    func moveToDrive(_ item: HillItem) async {
+        guard !sending.contains(item.id), !isOnDrive(item) else { return }
+        guard let dest = driveDir else {
+            say("Google Drive isn't on this Mac yet. Install Google Drive for desktop, or pick a folder in Settings")
+            return
+        }
+        let src = URL(fileURLWithPath: item.path)
+        guard FileManager.default.fileExists(atPath: src.path) else {
+            say("Can't find \(item.name) any more")
+            return
+        }
+        // A torrent still feeding others has its files open, so stop seeding first.
+        if let c = seeding.first(where: { $0.homePath == item.path }) {
+            try? await aria.call("aria2.forceRemove", [c.gid])
+            try? await Task.sleep(for: .milliseconds(400))
+            try? await aria.call("aria2.removeDownloadResult", [c.gid])
+            forgetSwarm(gid: c.gid)
+            await refresh()
+        }
+
+        sending.insert(item.id)
+        say("Carrying \(item.name) to Google Drive…")
+        let result: Result<URL, Error> = await Task.detached {
+            do {
+                let fm = FileManager.default
+                try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+                var isDir: ObjCBool = false
+                fm.fileExists(atPath: src.path, isDirectory: &isDir)
+                let ext = isDir.boolValue ? "" : src.pathExtension
+                let base = ext.isEmpty ? src.lastPathComponent : src.deletingPathExtension().lastPathComponent
+                var target = dest.appendingPathComponent(src.lastPathComponent)
+                var n = 2
+                while fm.fileExists(atPath: target.path) {
+                    target = dest.appendingPathComponent(ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)")
+                    n += 1
+                }
+                try fm.moveItem(at: src, to: target)
+                return .success(target)
+            } catch {
+                return .failure(error)
+            }
+        }.value
+        sending.remove(item.id)
+
+        switch result {
+        case .success(let target):
+            if let i = hill.firstIndex(where: { $0.id == item.id }) {
+                hill[i].path = target.path
+                saveHill()
+            }
+            say("\(item.name) is on Google Drive ✓")
+        case .failure(let e):
+            say("Couldn't move \(item.name): \(e.localizedDescription)")
+        }
     }
 
     // MARK: Clipboard sniffer ("Crumb spotted!")
