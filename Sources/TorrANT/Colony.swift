@@ -209,6 +209,9 @@ final class Colony {
         saveHill()
         say("\(c.name) is home ✓")
         Notifier.shared.home(item)
+        if !item.path.lowercased().hasSuffix(".torrent") {
+            PhoneLink.shared.notify(Uploader.shared.straightToDrive ? "⬇️ \(c.name) downloaded, now going up to Drive" : "✅ \(c.name) is on the Mac")
+        }
         if Uploader.shared.straightToDrive, !item.path.lowercased().hasSuffix(".torrent") {
             Task { await autoSend(item) }
         }

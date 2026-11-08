@@ -256,6 +256,7 @@ final class NightShift {
                 }
             }
             colony.say("Night shift: sent \(todo.count) download\(todo.count == 1 ? "" : "s")")
+            PhoneLink.shared.notify("🌙 Night shift started: \(todo.count) download\(todo.count == 1 ? "" : "s") on the way")
             save()
         } else if running {
             // Window's over: pause anything still on the trail; it carries on tomorrow night.
@@ -265,6 +266,7 @@ final class NightShift {
                 await colony.restAll()
                 pausedForDay = true
                 colony.say("Night shift over: \(left) paused, they'll finish tonight at \(NightShift.clock(start))")
+                PhoneLink.shared.notify("☀️ Night shift over: \(left) unfinished, paused until tonight at \(NightShift.clock(start))")
             } else {
                 colony.say("Night shift done ✓")
             }

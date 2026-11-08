@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             NetWatch.shared.start()
             Colony.shared.boot()
+            PhoneLink.shared.start()
             // Give macOS a moment to say whether this is a hotspot before preloading anything.
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(2))
@@ -286,6 +287,7 @@ struct SettingsView: View {
                 Text("Hover a finished download and press the cloud to move it there, or use the Google Drive page.")
                     .font(Theme.body(12)).foregroundStyle(Theme.muted)
             }
+            PhoneSettings()
             Toggle("Watch the clipboard for crumbs (download links and magnets)", isOn: Binding(
                 get: { colony.watchClipboard }, set: { colony.watchClipboard = $0 }))
                 .toggleStyle(.checkbox)
