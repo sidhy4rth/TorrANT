@@ -7,6 +7,13 @@ export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 swift build -c release
 BIN="$(swift build -c release --show-bin-path)/TorrANT"
 
+# App icon, drawn by the app itself from the sketched ant. Run the bare
+# binary, not the one inside the bundle: launching a half-built bundle makes
+# macOS cache it with no icon, and the Dock then shows a blank tile.
+mkdir -p build
+ICON_SRC=build/icon-1024.png
+"$BIN" --export-icon "$PWD/$ICON_SRC"
+
 APP=build/TorrANT.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Fonts"
@@ -21,9 +28,6 @@ cp -R Extension "$EXT"
 mkdir -p "$EXT/fonts"
 cp Sources/TorrANT/Resources/Fonts/BricolageGrotesque.ttf Sources/TorrANT/Resources/Fonts/Figtree.ttf "$EXT/fonts/"
 
-# App icon, drawn by the app itself from the sketched ant.
-ICON_SRC=build/icon-1024.png
-"$APP/Contents/MacOS/TorrANT" --export-icon "$PWD/$ICON_SRC"
 ICONSET=build/AppIcon.iconset
 rm -rf "$ICONSET"; mkdir -p "$ICONSET"
 for s in 16 32 128 256 512; do
@@ -34,4 +38,8 @@ done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
 codesign --force --deep --sign - "$APP" >/dev/null
+
+# Tell macOS about the finished bundle so Finder and the Dock pick up the icon.
+touch "$APP"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" || true
 echo "Built $APP"
