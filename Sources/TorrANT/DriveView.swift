@@ -16,6 +16,7 @@ struct DriveItem: Identifiable, Equatable {
     var onMac: Int64 = 0         // bytes taking space on this Mac
     var problem: String?
     var date = Date.distantPast
+    var tracked = false          // live progress known for every file still going up
 
     var fraction: Double { uploaded ? 1 : size > 0 ? min(1, Double(sent) / Double(size)) : 0 }
     var fullyOnMac: Bool { size == 0 || onMac >= size * 9 / 10 }
@@ -45,15 +46,20 @@ final class DriveWatcher {
     static let shared = DriveWatcher()
 
     var items: [DriveItem] = []
-    var speed: Double = 0        // bytes per second going up
+    var moving = false           // something is going up right now (drives the per-frame redraw)
     var scanned = false
     var busy: Set<String> = []   // items being freed up or downloaded
 
     @ObservationIgnored private var progress: [String: Progress] = [:]   // file path -> live upload progress
     @ObservationIgnored private var subscribers: [String: Any] = [:]
     @ObservationIgnored private var loop: Task<Void, Never>?
-    @ObservationIgnored private var lastSent: [String: Int64] = [:]   // file path -> bytes up at the last scan
-    @ObservationIgnored private var lastSentAt = Date()
+    // Live numbers: Drive reports in chunks, so between readings the screen keeps
+    // counting at the recent speed (never backwards), like the main screen.
+    @ObservationIgnored private var history: [String: [(Date, Double)]] = [:]     // item -> recent (time, bytes up)
+    @ObservationIgnored private var samples: [String: (sent: Double, size: Double, at: Date, rate: Double)] = [:]
+    @ObservationIgnored private var speed: Double = 0
+    @ObservationIgnored private var prevSpeed: Double = 0
+    @ObservationIgnored private var speedAt = Date()
 
     var account: String? {
         guard let dir = Colony.shared.driveDir else { return nil }
@@ -65,14 +71,42 @@ final class DriveWatcher {
     var waitingBytes: Int64 { totalSize - totalSent }
     var uploadedCount: Int { items.filter(\.uploaded).count }
     var onMacUploaded: Int64 { items.filter(\.uploaded).reduce(0) { $0 + $1.onMac } }
-    var eta: TimeInterval? { speed > 50_000 && waitingBytes > 0 ? Double(waitingBytes) / speed : nil }
+
+    // MARK: Live (read every frame)
+
+    func liveSpeed(_ now: Date) -> Double {
+        let k = min(1, max(0, now.timeIntervalSince(speedAt) / 1.0))
+        return prevSpeed + (speed - prevSpeed) * (1 - pow(1 - k, 3))
+    }
+
+    func liveSent(_ id: String, _ now: Date) -> Double {
+        guard let s = samples[id] else { return 0 }
+        guard s.rate > 0 else { return ForwardOnly.shared.step("drive:" + id, toward: s.sent, atLeast: s.sent, atMost: s.size) }
+        let guess = s.sent + s.rate * min(1.5, max(0, now.timeIntervalSince(s.at)))
+        return ForwardOnly.shared.step("drive:" + id, toward: guess, atLeast: s.sent, atMost: s.size)
+    }
+
+    func liveFraction(_ id: String, _ now: Date) -> Double {
+        guard let s = samples[id], s.size > 0 else { return 0 }
+        return min(1, liveSent(id, now) / s.size)
+    }
+
+    func liveTotalSent(_ now: Date) -> Double {
+        items.reduce(0) { $0 + ($1.uploaded ? Double($1.size) : liveSent($1.id, now)) }
+    }
+
+    func liveEta(_ now: Date) -> TimeInterval? {
+        let v = liveSpeed(now)
+        let left = Double(totalSize) - liveTotalSent(now)
+        return v > 20_000 && left > 0 ? left / v : nil
+    }
 
     func start() {
         guard loop == nil else { return }
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.scan()
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .milliseconds(500))
             }
         }
     }
@@ -81,7 +115,7 @@ final class DriveWatcher {
         loop?.cancel(); loop = nil
         for s in subscribers.values { Progress.removeSubscriber(s) }
         subscribers = [:]; progress = [:]
-        lastSent = [:]; speed = 0
+        history = [:]; samples = [:]; speed = 0; prevSpeed = 0; moving = false
     }
 
     func scan() async {
@@ -100,6 +134,7 @@ final class DriveWatcher {
         let next: [DriveItem] = entries.map { e in
             var it = DriveItem(url: e.url, name: e.url.lastPathComponent, isFolder: e.isFolder, date: e.date)
             it.uploaded = !e.files.isEmpty && e.files.allSatisfy(\.uploaded)
+            it.tracked = true
             for f in e.files {
                 it.size += f.size
                 it.onMac += f.onMac
@@ -109,6 +144,8 @@ final class DriveWatcher {
                     it.sent += f.size
                 } else if let p = progress[f.path], p.totalUnitCount > 0 {
                     it.sent += min(f.size, max(0, p.completedUnitCount))
+                } else {
+                    it.tracked = false
                 }
             }
             if e.files.isEmpty { it.uploaded = true }
@@ -116,25 +153,34 @@ final class DriveWatcher {
         }
         .sorted { $0.uploaded == $1.uploaded ? $0.date > $1.date : !$0.uploaded }
 
-        // Upload speed: only bytes that moved since the last scan, on files we were already
-        // watching (a fresh progress feed starts mid-way and would look like a burst).
-        var sentNow: [String: Int64] = [:]
-        for e in entries {
-            for f in e.files {
-                if f.uploaded { sentNow[f.path] = f.size }
-                else if let p = progress[f.path], p.totalUnitCount > 0 { sentNow[f.path] = min(f.size, max(0, p.completedUnitCount)) }
-            }
-        }
+        // Speed per item over the last few seconds. Only counts readings from a progress
+        // feed we were already watching: a fresh feed starts mid-way and isn't speed.
         let now = Date()
-        let dt = now.timeIntervalSince(lastSentAt)
-        if !lastSent.isEmpty, dt > 0.2 {
-            var delta: Int64 = 0
-            for (path, b) in sentNow { if let a = lastSent[path] { delta += max(0, b - a) } }
-            let rate = Double(delta) / dt
-            speed = speed == 0 ? rate : speed * 0.7 + rate * 0.3
+        var total = 0.0
+        for it in next {
+            let sent = Double(it.uploaded ? it.size : it.sent)
+            var h = history[it.id] ?? []
+            if !it.tracked && !it.uploaded {
+                h = []
+            } else {
+                if let last = h.last, sent < last.1 { h = [] }
+                if h.isEmpty { ForwardOnly.shared.set("drive:" + it.id, sent) }
+                h.append((now, sent))
+                h.removeAll { now.timeIntervalSince($0.0) > 8 }
+            }
+            history[it.id] = h
+            var rate = 0.0
+            if !it.uploaded, let first = h.first, now.timeIntervalSince(first.0) > 0.8 {
+                rate = max(0, (sent - first.1) / now.timeIntervalSince(first.0))
+            }
+            samples[it.id] = (sent, Double(it.size), now, rate)
+            total += rate
         }
-        lastSent = sentNow; lastSentAt = now
-        if !next.contains(where: { !$0.uploaded }) { speed = 0 }
+        let ids = Set(next.map(\.id))
+        for k in history.keys where !ids.contains(k) { history[k] = nil; samples[k] = nil }
+        prevSpeed = liveSpeed(now); speed = total; speedAt = now
+        let isMoving = total > 0 || next.contains { $0.uploading }
+        if isMoving != moving { moving = isMoving }
 
         if next != items { items = next }
         scanned = true
@@ -344,17 +390,13 @@ struct DriveView: View {
             Card {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Flying up").font(Theme.body(14)).foregroundStyle(Theme.muted)
-                    let (n, u) = Fmt.speedParts(Int(watcher.speed))
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(n).font(Theme.display(38)).foregroundStyle(Theme.red).monospacedDigit()
-                        Text(u).font(Theme.body(15, .semibold)).foregroundStyle(Theme.muted)
+                    OdometerLayer(live: watcher.moving, size: 38, color: Theme.red) { Fmt.odoSpeed(watcher.liveSpeed($0)) }
+                        .frame(height: 46)
+                    LiveLabel(live: watcher.moving, font: LiveFont.body(13), color: Theme.muted) { now in
+                        let left = Double(watcher.totalSize) - watcher.liveTotalSent(now)
+                        return left > 1 ? "\(Fmt.liveSize(left)) to go · \(Fmt.clock(watcher.liveEta(now))) left" : "Nothing waiting"
                     }
-                    .frame(height: 46, alignment: .leading)
-                    Text(watcher.waitingBytes > 0
-                         ? "\(Fmt.bytes(watcher.waitingBytes)) to go · \(Fmt.eta(watcher.eta)) left"
-                         : "Nothing waiting")
-                        .font(Theme.body(13)).foregroundStyle(Theme.muted).monospacedDigit()
-                        .frame(height: 36, alignment: .leading)
+                    .frame(height: 36)
                 }
             }
             Card {
@@ -365,10 +407,10 @@ struct DriveView: View {
                         Text("of \(watcher.items.count)").font(Theme.body(15, .semibold)).foregroundStyle(Theme.muted)
                     }
                     .frame(height: 46, alignment: .leading)
-                    Bar(fraction: watcher.totalSize > 0 ? Double(watcher.totalSent) / Double(watcher.totalSize) : 0,
-                        color: watcher.waitingBytes > 0 ? Theme.red : Theme.safe)
-                        .frame(height: 6)
-                        .frame(height: 36)
+                    LiveBarLayer(live: watcher.moving, color: watcher.waitingBytes > 0 ? Theme.red : Theme.safe, ant: Theme.chalk) { now in
+                        watcher.totalSize > 0 ? watcher.liveTotalSent(now) / Double(watcher.totalSize) : 0
+                    }
+                    .frame(height: 36)
                 }
             }
             Card {
@@ -476,13 +518,28 @@ struct DriveRow: View {
                 HStack(spacing: 10) {
                     Text(item.name).font(Theme.body(15, .semibold)).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 8)
-                    Text(statusText).font(Theme.body(13, .semibold)).foregroundStyle(statusColor).monospacedDigit()
+                    if showsPercent {
+                        LiveLabel(live: liveRow, font: LiveFont.body(13, 600), color: statusColor, align: .right) { now in
+                            String(format: "%.1f%%", watcher.liveFraction(item.id, now) * 100)
+                        }
+                        .frame(width: 70, height: 18)
+                    } else {
+                        Text(statusText).font(Theme.body(13, .semibold)).foregroundStyle(statusColor)
+                    }
                 }
-                Bar(fraction: item.fraction, color: item.uploaded ? Theme.safe : Theme.red).frame(height: 6)
+                LiveBarLayer(live: liveRow, color: item.uploaded ? Theme.safe : Theme.red, ant: Theme.chalk) { now in
+                    item.uploaded ? 1 : watcher.liveFraction(item.id, now)
+                }
+                .frame(height: 18)
                 HStack(spacing: 8) {
-                    Text(item.uploaded ? Fmt.bytes(item.size)
-                         : "\(Fmt.bytes(item.sent)) of \(Fmt.bytes(item.size))")
-                        .monospacedDigit()
+                    if item.uploaded {
+                        Text(Fmt.bytes(item.size))
+                    } else {
+                        LiveLabel(live: liveRow, font: LiveFont.body(13), color: Theme.muted) { now in
+                            "\(Fmt.liveSize(watcher.liveSent(item.id, now))) of \(Fmt.bytes(item.size))"
+                        }
+                        .frame(width: 140, height: 18)
+                    }
                     Text("·")
                     Text(placeText)
                 }
@@ -499,6 +556,11 @@ struct DriveRow: View {
         .help(item.problem == "paused" ? "Google Drive can't upload right now. Syncing is paused or there's no internet."
               : item.problem ?? "Double-click to play")
         .contextMenu { menu }
+    }
+
+    private var liveRow: Bool { watcher.moving && !item.uploaded }
+    private var showsPercent: Bool {
+        !watcher.busy.contains(item.id) && item.problem == nil && !item.uploaded && (item.uploading || item.sent > 0)
     }
 
     private var statusText: String {
