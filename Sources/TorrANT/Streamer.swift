@@ -67,7 +67,9 @@ final class Streamer {
     }
 
     var rclone: String? {
-        ["/opt/homebrew/bin/rclone", "/usr/local/bin/rclone"].first { FileManager.default.isExecutableFile(atPath: $0) }
+        // The copy inside the app first, so TorrANT works on Macs without Homebrew.
+        ([Bundle.main.resourceURL?.appendingPathComponent("rclone/rclone").path].compactMap { $0 }
+            + ["/opt/homebrew/bin/rclone", "/usr/local/bin/rclone"]).first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     var vlc: URL? {

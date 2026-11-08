@@ -91,6 +91,14 @@ final class Aria2: @unchecked Sendable {
             "--quiet=true",
         ]
         let p = Process()
+        // The copy inside the app brings OpenSSL's plug-ins; tell OpenSSL where they are so it
+        // never reaches for a Homebrew install (which a friend's Mac won't have).
+        if let mods = Bundle.main.resourceURL?.appendingPathComponent("aria2/lib/ossl-modules"),
+           FileManager.default.fileExists(atPath: mods.path) {
+            var env = ProcessInfo.processInfo.environment
+            env["OPENSSL_MODULES"] = mods.path
+            p.environment = env
+        }
         p.executableURL = bin
         p.arguments = args
         p.standardOutput = FileHandle.nullDevice

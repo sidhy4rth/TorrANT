@@ -37,6 +37,9 @@ for s in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
+# Download and Drive engines inside the app, so it runs on Macs without Homebrew.
+scripts/bundle-engines.sh "$APP"
+
 codesign --force --deep --sign - "$APP" >/dev/null
 
 # Tell macOS about the finished bundle so Finder and the Dock pick up the icon.
