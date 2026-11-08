@@ -24,6 +24,14 @@ struct TorrANTApp: App {
         .defaultSize(width: 1280, height: 800)
         .commands { ColonyCommands() }
 
+        Window("Link Grabber", id: "grabber") {
+            GrabberView()
+                .frame(minWidth: 980, minHeight: 600)
+                .preferredColorScheme(.dark)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1120, height: 720)
+
         Window("Library", id: "library") {
             LibraryView()
                 .frame(minWidth: 900, minHeight: 620)
@@ -59,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             Colony.shared.boot()
             Streamer.shared.warmUp()   // stream server + preload ready before the first ▶
+            NightShift.shared.begin()
         }
         Catcher.shared.start()
     }
@@ -106,6 +115,8 @@ struct ColonyCommands: Commands {
                 .keyboardShortcut("d", modifiers: [.command, .shift])
             Button("Library") { openWindow(id: "library") }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+            Button("Link Grabber & Night Shift") { openWindow(id: "grabber") }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
         }
     }
 }

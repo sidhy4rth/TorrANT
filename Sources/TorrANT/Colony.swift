@@ -195,6 +195,7 @@ final class Colony {
 
         let working = sorted.contains { $0.state == .active || $0.state == .waiting }
             || driveBusy || !carrying.isEmpty || !unpacking.isEmpty || !Uploader.shared.jobs.isEmpty
+            || NightShift.shared.needsMacAwake
         if Awake.shared.update(working: working) {
             say(Awake.shared.holding ? "Keeping the Mac awake while the ants work" : "All quiet. The Mac can sleep again")
         }

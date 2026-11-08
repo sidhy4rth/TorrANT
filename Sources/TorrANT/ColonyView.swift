@@ -138,6 +138,13 @@ struct ColonyView: View {
                     .font(Theme.body(14))
                     .onSubmit(sendInput)
             }
+            Button { openWindow(id: "grabber") } label: {
+                Image(systemName: "link.badge.plus").font(.system(size: 15, weight: .semibold))
+                    .frame(width: 40, height: 40)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Theme.muted)
+            .help("Link Grabber & Night shift (⇧⌘G)")
             Button {
                 openTorrentPanel()
             } label: {
