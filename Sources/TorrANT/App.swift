@@ -47,7 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Give macOS a moment to say whether this is a hotspot before preloading anything.
             // A plain main-queue timer: a Task started here never woke from its sleep (8 Nov).
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                MainActor.assumeIsolated { Streamer.shared.warmUp() }   // stream server + preload ready before the first ▶
+                MainActor.assumeIsolated {
+                    Streamer.shared.warmUp()   // stream server + preload ready before the first ▶
+                    Task { await LibraryStore.shared.refresh() }   // posters for anything new, without opening the Library
+                }
             }
             NightShift.shared.begin()
         }

@@ -129,6 +129,7 @@ final class LibraryStore {
 
     @ObservationIgnored private var tried: [String: String] = [:]   // key → file name, "" if none found
     @ObservationIgnored private var names: [String: String] = [:]   // key → proper title
+    @ObservationIgnored private var missedAt: [String: Date] = [:]  // last failed look-up (this launch)
     @ObservationIgnored private var fetching = false
 
     private var dir: URL {
@@ -164,6 +165,12 @@ final class LibraryStore {
             }
         }
         return out.sorted { $0.2 > $1.2 }.prefix(12).map { ($0.0, $0.1) }
+    }
+
+    /// ↻ in the Library: look again for titles that had no poster last time.
+    func retryMissing() async {
+        for (k, v) in tried where v.isEmpty { tried[k] = nil; names[k] = nil; missedAt[k] = nil }
+        await refresh()
     }
 
     func refresh() async {
@@ -202,7 +209,13 @@ final class LibraryStore {
         fetching = true
         defer { fetching = false }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        for e in entries where tried[e.posterKey] == nil {
+        // New titles, plus ones that had no poster: those retry once per launch and then at most
+        // hourly, since Wikipedia pages and posters often appear after a film's release.
+        let due = entries.filter { e in
+            guard let t = tried[e.posterKey] else { return true }
+            return t.isEmpty && Date().timeIntervalSince(missedAt[e.posterKey] ?? .distantPast) > 3600
+        }
+        for e in due {
             let (img, name) = await LibraryStore.lookUp(e)
             var saved = ""
             if let img, let data = await LibraryStore.download(img) {
@@ -218,6 +231,7 @@ final class LibraryStore {
                 if let d = try? JSONEncoder().encode(names) { try? d.write(to: namesFile, options: .atomic) }
             }
             tried[e.posterKey] = saved
+            if saved.isEmpty { missedAt[e.posterKey] = Date() }
             if let d = try? JSONEncoder().encode(tried) { try? d.write(to: index, options: .atomic) }
         }
     }
@@ -246,16 +260,35 @@ final class LibraryStore {
             let img = (d["image"] as? [String: Any]).flatMap { ($0["original"] ?? $0["medium"]) as? String }
             if let img, let u = URL(string: img) { return (u, d["name"] as? String) }
         }
-        let what = e.isShow ? "\(e.title) TV series" : "\(e.title) \(e.year.map(String.init) ?? "") film"
-        guard let s = await json("https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=1&format=json&srsearch=\(q(what))") as? [String: Any],
-              let hits = (s["query"] as? [String: Any])?["search"] as? [[String: Any]],
-              let page = hits.first?["title"] as? String,
-              let sum = await json("https://en.wikipedia.org/api/rest_v1/page/summary/\(q(page.replacingOccurrences(of: " ", with: "_")))") as? [String: Any]
-        else { return (nil, nil) }
-        let img = ((sum["thumbnail"] as? [String: Any])?["source"] ?? (sum["originalimage"] as? [String: Any])?["source"]) as? String
-        // "Moana (2026 film)" → "Moana"
-        let clean = page.replacingOccurrences(of: #"\s*\((\d{4} )?(film|TV series|miniseries)\)$"#, with: "", options: .regularExpression)
-        return (img.flatMap(URL.init(string:)), e.isShow ? nil : clean)
+        // Films (and shows TVmaze didn't know): check likely Wikipedia pages and keep the first
+        // that is a film/series from the right year and has a poster. The top search hit alone
+        // was wrong for "Dalloway (2025)": it returned Mrs Dalloway (1997), which has no image.
+        let t = e.parsed
+        var pages: [String] = e.isShow
+            ? ["\(t) (TV series)", "\(t) (\(e.year.map(String.init) ?? "") TV series)", t]
+            : (e.year.map { ["\(t) (\($0) film)"] } ?? []) + ["\(t) (film)", t]
+        let what = e.isShow ? "\(t) TV series" : "\(t) \(e.year.map(String.init) ?? "") film"
+        if let s = await json("https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=5&format=json&srsearch=\(q(what))") as? [String: Any],
+           let hits = (s["query"] as? [String: Any])?["search"] as? [[String: Any]] {
+            pages += hits.compactMap { $0["title"] as? String }
+        }
+        var seen = Set<String>()
+        for page in pages where seen.insert(page).inserted {
+            guard let sum = await json("https://en.wikipedia.org/api/rest_v1/page/summary/\(q(page.replacingOccurrences(of: " ", with: "_")))") as? [String: Any],
+                  (sum["type"] as? String) == "standard",
+                  let img = ((sum["thumbnail"] as? [String: Any])?["source"] ?? (sum["originalimage"] as? [String: Any])?["source"]) as? String
+            else { continue }
+            let about = ((sum["description"] as? String ?? "") + " " + (sum["extract"] as? String ?? "")).lowercased()
+            let kind = e.isShow ? (about.contains("series") || about.contains("television")) : about.contains("film")
+            let rightYear = e.year.map { about.contains(String($0)) } ?? true
+            guard kind, rightYear else { continue }
+            // Keep your title unless Wikipedia's is the same name, just tidier ("Moana (2026 film)" → "Moana").
+            let found = (sum["title"] as? String ?? page)
+                .replacingOccurrences(of: #"\s*\((\d{4} )?(film|TV series|miniseries)\)$"#, with: "", options: .regularExpression)
+            let name = LibraryStore.norm(found) == LibraryStore.norm(t) ? found : nil
+            return (URL(string: img), e.isShow ? nil : name)
+        }
+        return (nil, nil)
     }
 }
 
@@ -317,14 +350,14 @@ struct LibraryView: View {
             Text("Everything in your Drive, ready to stream.").font(Theme.body(14)).foregroundStyle(Theme.muted)
                 .lineLimit(1).layoutPriority(-1)
             Spacer()
-            Button { Task { await store.refresh() } } label: {
+            Button { Task { await store.retryMissing() } } label: {
                 Image(systemName: "arrow.clockwise").font(.system(size: 13, weight: .semibold))
                     .frame(width: 34, height: 34)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
             }
             .buttonStyle(.plain)
-            .help("Look for new things in Drive")
+            .help("Look for new things in Drive, and try again for missing posters")
         }
         .padding(.leading, 22)
         .padding(.trailing, 18)
@@ -560,7 +593,7 @@ private struct EpisodeLine: View {
 // MARK: - "You already have this"
 
 extension LibraryStore {
-    static func norm(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }
+    nonisolated static func norm(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }
 
     /// What you already have that matches a download's name: the same film (and year), the same
     /// season, or the same episode, in Drive or still on this Mac. Nil when it's new or isn't a
