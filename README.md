@@ -74,6 +74,7 @@ bone means a crumb, and every label says what it means in plain words.
 | **Has a Library** | Posters and clean titles for everything in Drive, seasons with their episodes, and a *Continue watching* row. |
 | **Grabs links in bulk** | Paste a web page and the ants list every video, archive, torrent and magnet on it, with sizes. Download now or leave them for the night shift. [How ↓](#link-grabber-and-night-shift) |
 | **Works the night shift** | Queued downloads run from 1 to 7 AM (your times), pause what's unfinished at the end and carry on the next night. Never starts on a hotspot or a Low Data Mode network. |
+| **Takes links from your phone** | Share a link to your own private Telegram bot and it joins tonight's night shift (add "now" to start at once). The bot confirms what was queued, answers "status", and tells you when things finish. Only the one phone that paired with a code shown on the Mac can use it. |
 | **Lives in one window** | Downloads, Library, Google Drive, Link Grabber and Settings are sections of one window, switched from the sidebar or with ⌘1–4. |
 | **Keeps the Mac awake** | While anything is downloading, queued, unpacking or still uploading to Drive, the Mac won't idle-sleep. The screen can still turn off. The moment everything is done, it can sleep again. |
 | **Shares back, then stops** | Finished torrents keep feeding other colonies until they've given back as much as they took (1×), then rest. |
@@ -241,6 +242,7 @@ Everything below was run on a real Mac (macOS 26, Apple Silicon) and looked at, 
 | Library | Seven titles in Drive | All seven posters, cleaned titles, episode counts |
 | Link Grabber | Two Blender release pages | 75 and 11 links with names and sizes; 1 MB of data used |
 | Night shift | Short test windows | Sent on time, *Night shift done ✓*, and unfinished downloads paused at the end |
+| Phone link | Paired an Android phone, sent "status" and a link from Telegram | Bot answered from the Mac; the link landed in the night queue with its size |
 | Zip link, Straight to Drive | A 3 MB zip of 848 small files | Unpacked on the Mac, uploaded (about 6½ minutes), Mac copy gone |
 
 **Not yet checked by hand:** the clipboard banner, magnet links clicked in a browser, notifications, the
