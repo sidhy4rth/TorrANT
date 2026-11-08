@@ -203,7 +203,10 @@ final class Uploader {
                            // rclone's default 8 MB upload pieces: a link is fetched and sent piece
                            // by piece, so small pieces keep both moving. 64 MB (tried 8 Nov) made it
                            // download 64 MB, then upload it, so progress stalled and jumped.
-                           "--transfers", "2",
+                           // 8 at a time: a season is a few big files, but an unpacked zip
+                           // can be hundreds of tiny ones and Drive takes ~1 s to file each.
+                           // At 2 at a time, 692 small files took over 15 minutes (8 Nov).
+                           "--transfers", "8", "--checkers", "16",
                            "--retries", "5", "--low-level-retries", "20"]
             p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
             do { try p.run() } catch { continue }

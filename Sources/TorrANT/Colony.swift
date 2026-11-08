@@ -253,8 +253,10 @@ final class Colony {
                 await openTorrent(u); any = true; continue
             }
             guard Link.isMagnet(line) || Link.isWebLink(line) else { continue }
-            if Uploader.shared.straightToDrive, Link.isWebLink(line),
-               URL(string: line)?.pathExtension.lowercased() != "torrent" {
+            // Zips stop on the Mac first: Drive can't stream what's inside a zip, so they're
+            // downloaded, unpacked, uploaded and deleted (the hands-free path) instead.
+            let ext = URL(string: line)?.pathExtension.lowercased() ?? ""
+            if Uploader.shared.straightToDrive, Link.isWebLink(line), ext != "torrent", ext != "zip" {
                 if await Uploader.shared.sendLink(line) { any = true; continue }
                 // Not signed in yet: fall back to the Mac, then hands-free upload.
             }
