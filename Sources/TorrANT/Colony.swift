@@ -503,10 +503,22 @@ final class Colony {
         }
     }
 
+    /// Writes down what started each move to Drive (App Support/TorrANT/drive-moves.log).
+    private func noteDriveMove(_ name: String) {
+        let line = "\(Date()) \(name)\n" + Thread.callStackSymbols.prefix(14).joined(separator: "\n") + "\n\n"
+        let url = support.appendingPathComponent("drive-moves.log")
+        if let h = try? FileHandle(forWritingTo: url) {
+            h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close()
+        } else {
+            try? line.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
     static let noDriveNote = "Google Drive isn't on this Mac yet. Install Google Drive for desktop, or pick a folder in Settings"
 
     /// The actual move, done off the main thread. Renames on a clash instead of overwriting.
     private func carry(_ src: URL, name: String, id: UUID) async -> URL? {
+        noteDriveMove(name)
         guard let dest = driveDir else { say(Colony.noDriveNote); return nil }
         let fm = FileManager.default
         guard fm.fileExists(atPath: src.path) else {
