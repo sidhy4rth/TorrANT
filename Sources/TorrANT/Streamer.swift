@@ -17,6 +17,8 @@ final class Streamer {
     @ObservationIgnored private let user = "ant"
     @ObservationIgnored private let pass = UUID().uuidString.replacingOccurrences(of: "-", with: "")
     @ObservationIgnored private var signIn: Process?
+    @ObservationIgnored private var serverLog: Pipe?
+    @ObservationIgnored private var player: Process?
 
     static let videoKinds: Set<String> = ["mkv", "mp4", "m4v", "mov", "avi", "webm", "ts", "wmv", "flv"]
 
@@ -25,6 +27,11 @@ final class Streamer {
             .appendingPathComponent("TorrANT", isDirectory: true)
     }
     private var config: URL { support.appendingPathComponent("rclone.conf") }
+    /// Parts of videos already fetched (max 20 GB, cleared after a day). Caches, so macOS may clear it too.
+    private var streamCache: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TorrANT/stream", isDirectory: true)
+    }
 
     var rclone: String? {
         ["/opt/homebrew/bin/rclone", "/usr/local/bin/rclone"].first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -54,7 +61,11 @@ final class Streamer {
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: rclone)
-        p.arguments = ["config", "create", "drive", "drive", "scope=drive.readonly", "--config", config.path]
+        let existing = (try? String(contentsOf: config, encoding: .utf8)) ?? ""
+        // Signing in again keeps the private Google key; only a first setup creates the remote.
+        p.arguments = existing.contains("client_id")
+            ? ["config", "update", "drive", "config_refresh_token", "true", "--config", config.path]
+            : ["config", "create", "drive", "drive", "scope=drive.readonly", "--config", config.path]
         p.standardOutput = Pipe(); p.standardError = Pipe()
         p.terminationHandler = { proc in
             let ok = proc.terminationStatus == 0
@@ -80,11 +91,22 @@ final class Streamer {
     /// Plays a file: from disk if it's all here, otherwise streamed.
     func play(_ file: URL) async {
         if Streamer.isOnMac(file) {
-            open([file])
+            launch([file.path])
             return
         }
         guard let link = await streamLink(for: file) else { return }
-        open([link])
+        launch([link.absoluteString])
+    }
+
+    /// Starts the server and looks up the Drive folder ahead of time, so the first ▶ is quick.
+    func warmUp() {
+        guard state == .ready, server == nil || server?.isRunning == false else { return }
+        Task {
+            guard await startServer(), let dir = Colony.shared.driveDir,
+                  let rel = Streamer.pathInDrive(dir.appendingPathComponent("x")) else { return }
+            let folder = rel.split(separator: "/").dropLast().joined(separator: "/")
+            _ = await Streamer.answers(port: port, user: user, pass: pass, path: folder)
+        }
     }
 
     /// Plays every episode in a season folder, in order, as one VLC playlist.
@@ -108,15 +130,32 @@ final class Streamer {
         let m3u = list.appendingPathComponent("\(folder.lastPathComponent).m3u")
         try? lines.joined(separator: "\n").write(to: m3u, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: m3u.path)
-        open([m3u])
+        launch([m3u.path])
     }
 
-    private func open(_ urls: [URL]) {
+    /// One VLC window that TorrANT owns, set up to buffer like YouTube:
+    /// ~1 s of video before it plays, then up to 128 MB (several minutes) read ahead,
+    /// and it reconnects on its own if the Wi-Fi drops for a moment.
+    private func launch(_ items: [String]) {
         guard let vlc else {
             Colony.shared.say("VLC isn't installed")
             return
         }
-        NSWorkspace.shared.open(urls, withApplicationAt: vlc, configuration: NSWorkspace.OpenConfiguration())
+        if let old = player, old.isRunning { old.terminate() }
+        let p = Process()
+        p.executableURL = vlc.appendingPathComponent("Contents/MacOS/VLC")
+        p.arguments = ["--network-caching=1000", "--file-caching=1000",
+                       "--prefetch-buffer-size=131072", "--prefetch-read-size=1048576",
+                       "--http-reconnect", "--no-video-title-show"] + items
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do {
+            try p.run()
+            player = p
+            NSRunningApplication(processIdentifier: p.processIdentifier)?.activate()
+        } catch {
+            Colony.shared.say("Couldn't open VLC: \(error.localizedDescription)")
+        }
     }
 
     /// The streaming link for a file in Google Drive, starting the little server if needed.
@@ -146,12 +185,22 @@ final class Streamer {
             p.executableURL = URL(fileURLWithPath: rclone)
             p.arguments = ["serve", "http", "drive:", "--config", config.path,
                            "--addr", "127.0.0.1:\(tryPort)", "--user", user, "--pass", pass,
-                           "--read-only", "--vfs-cache-mode", "off",
-                           // Small reads: VLC jumps around a file's index before playing,
-                           // and big read-ahead blocks wasted ~120 MB per start in testing.
-                           "--buffer-size", "4M", "--vfs-read-chunk-size", "4M",
-                           "--vfs-read-chunk-size-limit", "64M", "--dir-cache-time", "1m"]
-            p.standardOutput = Pipe(); p.standardError = Pipe()
+                           "--read-only",
+                           // Like YouTube, tested 8 Nov on a 2.2 GB movie with scripted skips:
+                           // a disk cache keeps the file's index and every part already watched
+                           // (start 9.3 s → 5.1 s, long skip 5.4 → 3.7 s, back to a watched
+                           // spot ~instant). Read-ahead stays small (48 MB) because a big one
+                           // kept old spots downloading and slowed later skips; VLC does the
+                           // long read-ahead itself.
+                           "--vfs-cache-mode", "full", "--cache-dir", streamCache.path,
+                           "--vfs-read-ahead", "48M",
+                           "--vfs-cache-max-size", "20G", "--vfs-cache-max-age", "24h",
+                           // Small first read so a jump starts fast, then doubling to big reads.
+                           "--vfs-read-chunk-size", "8M", "--vfs-read-chunk-size-limit", "off",
+                           "--buffer-size", "16M", "--dir-cache-time", "1h"]
+            let err = Pipe()
+            p.standardOutput = Pipe(); p.standardError = err
+            serverLog = err
             do { try p.run() } catch { continue }
             // Ready when it answers on the port.
             for _ in 0..<40 {
@@ -164,20 +213,31 @@ final class Streamer {
             }
             p.terminate()
         }
-        Colony.shared.say("Couldn't start streaming. Check the internet and try again")
+        if let log = serverLog, let text = String(data: log.fileHandleForReading.availableData, encoding: .utf8),
+           text.contains("invalid_grant") || text.contains("token expired") {
+            state = .notSetUp
+            Colony.shared.say("Google wants you to sign in again for streaming (it asks about once a week)")
+        } else {
+            Colony.shared.say("Couldn't start streaming. Check the internet and try again")
+        }
         return false
     }
 
     func stop() {
         server?.terminate(); server = nil
+        if let p = player, p.isRunning { p.terminate() }
+        player = nil
         signIn?.terminate(); signIn = nil
         try? FileManager.default.removeItem(at: support.appendingPathComponent("playlists"))
     }
 
     // MARK: Helpers
 
-    nonisolated static func answers(port: Int, user: String, pass: String) async -> Bool {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/") else { return false }
+    nonisolated static func answers(port: Int, user: String, pass: String, path: String = "") async -> Bool {
+        let p = path.split(separator: "/").map {
+            String($0).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0)
+        }.joined(separator: "/")
+        guard let url = URL(string: "http://127.0.0.1:\(port)/\(p)\(p.isEmpty ? "" : "/")") else { return false }
         var req = URLRequest(url: url, timeoutInterval: 1)
         req.httpMethod = "HEAD"
         req.setValue("Basic " + Data("\(user):\(pass)".utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")

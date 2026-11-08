@@ -335,7 +335,7 @@ struct DriveView: View {
                     .padding(10).allowsHitTesting(false)
             }
         }
-        .onAppear { watcher.start() }
+        .onAppear { watcher.start(); Streamer.shared.warmUp() }
         .onDisappear { watcher.stop() }
     }
 
