@@ -5,7 +5,7 @@
   <img alt="TorrANT: torrents and links for your Mac" src="docs/assets/banner-light.png" width="720">
 </picture>
 
-### A Mac downloader for torrents and plain links, where every download is an ant carrying something home, and winged ants fly it up to Google Drive. No crumb too big.
+### Your own streaming service, run by ants. TorrANT downloads torrents and links, flies them up to Google Drive so your Mac stays empty, and streams them back like YouTube, with posters, resume, a night shift and a Telegram bot in your pocket. No crumb too big.
 
 ![macOS](https://img.shields.io/badge/macOS-14%2B-0A0A0A?logo=apple&logoColor=white)
 ![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)
@@ -13,7 +13,8 @@
 ![BitTorrent](https://img.shields.io/badge/BitTorrent-DHT_·_PEX_·_magnets-E5322D)
 ![Brave](https://img.shields.io/badge/Brave-catches_every_download-FB542B?logo=brave&logoColor=white)
 ![Google Drive](https://img.shields.io/badge/Google_Drive-uploads_·_streams-1FA463?logo=googledrive&logoColor=white)
-![Status](https://img.shields.io/badge/status-v0.3_·_private-5A5551)
+![Telegram](https://img.shields.io/badge/Telegram-your_pocket_remote-26A5E4?logo=telegram&logoColor=white)
+![Status](https://img.shields.io/badge/status-v0.4_·_private-5A5551)
 
 [**What it does**](#what-it-does) ·
 [**Brave hand-off**](#catching-every-brave-download) ·
@@ -48,7 +49,12 @@
 </tr>
 </table>
 
-**The story.** Ants live for the swarm. A torrent is a swarm: thousands of colonies sharing pieces of the
+**The story.** It started as a downloader and became a colony. Ants carry everything home, winged
+ants fly it up to Google Drive so the Mac never fills up, and when you want to watch something the
+colony streams it straight back, from wherever it lives. You can even send the ants out from your
+phone at midnight and wake up to a full Library.
+
+Ants live for the swarm. A torrent is a swarm: thousands of colonies sharing pieces of the
 same thing, and TorrANT's ants join in, bring the pieces home and share some back. But an ant never walks
 past food lying on the ground, so a plain download link is a crumb, grabbed on sight and dragged home by
 eight ants at once. Everything that arrives goes into the Anthill. And when the Anthill gets full, winged ants
@@ -74,7 +80,7 @@ bone means a crumb, and every label says what it means in plain words.
 | **Has a Library** | Posters and clean titles for everything in Drive, seasons with their episodes, and a *Continue watching* row. |
 | **Grabs links in bulk** | Paste a web page and the ants list every video, archive, torrent and magnet on it, with sizes. Download now or leave them for the night shift. [How ↓](#link-grabber-and-night-shift) |
 | **Works the night shift** | Queued downloads run from 1 to 7 AM (your times), pause what's unfinished at the end and carry on the next night. Never starts on a hotspot or a Low Data Mode network. |
-| **Takes links from your phone** | Share a link to your own private Telegram bot and it joins tonight's night shift (add "now" to start at once). The bot confirms what was queued, answers "status", and tells you when things finish. Only the one phone that paired with a code shown on the Mac can use it. |
+| **Has a pocket remote** | Your own private Telegram bot. Share a link and it joins tonight's night shift, with ▶️ *Start now* and ❌ *Remove* buttons right under it. 📊 *Status* opens a live view that updates itself with progress bars, speed and time left. 🌙 *Queue* lists tonight's batch. ⏸ / ▶️ pause or wake every ant. When a movie reaches the Library, its poster arrives in the chat. Only the one phone that paired with a code shown on the Mac can use it. [How ↓](#the-pocket-remote) |
 | **Lives in one window** | Downloads, Library, Google Drive, Link Grabber and Settings are sections of one window, switched from the sidebar or with ⌘1–4. |
 | **Keeps the Mac awake** | While anything is downloading, queued, unpacking or still uploading to Drive, the Mac won't idle-sleep. The screen can still turn off. The moment everything is done, it can sleep again. |
 | **Shares back, then stops** | Finished torrents keep feeding other colonies until they've given back as much as they took (1×), then rest. |
@@ -216,6 +222,23 @@ metered connection: a hotspot macOS flags as expensive, or any network with Low 
 
 ---
 
+## The pocket remote
+
+TorrANT talks to a Telegram bot you own. It listens with one long request at a time (no server, no
+port opened on your Mac), and the bot's token sits in the macOS Keychain.
+
+- **Share, don't type.** Any link shared to the bot is checked the same way the Link Grabber checks
+  it, then queued for the night shift. Pages full of downloads are opened and searched. "now" in
+  the message starts it straight away, unless the Mac is on a hotspot.
+- **Buttons, not commands.** A button bar sits under the chat (📊 Status · 🌙 Queue · ⏸ Pause all ·
+  ▶️ Resume all), queued links get ▶️ / ❌ buttons, and the queue lists every item with its own.
+- **A live view.** 📊 Status sends one message and keeps editing it every few seconds: a bar,
+  percentage, speed and time left for each download, unpack and upload, until it says ✅ All done.
+- **News from home.** The night shift says when it starts and when it pauses leftovers; finished
+  downloads report in; movies that land in the Library arrive as their poster.
+
+---
+
 ## Checked by hand
 
 Everything below was run on a real Mac (macOS 26, Apple Silicon) and looked at, not just compiled.
@@ -242,7 +265,7 @@ Everything below was run on a real Mac (macOS 26, Apple Silicon) and looked at, 
 | Library | Seven titles in Drive | All seven posters, cleaned titles, episode counts |
 | Link Grabber | Two Blender release pages | 75 and 11 links with names and sizes; 1 MB of data used |
 | Night shift | Short test windows | Sent on time, *Night shift done ✓*, and unfinished downloads paused at the end |
-| Phone link | Paired an Android phone, sent "status" and a link from Telegram | Bot answered from the Mac; the link landed in the night queue with its size |
+| Pocket remote | Paired an Android phone, sent "status" and a link from Telegram | Bot answered from the Mac; the link landed in the night queue with its size and ▶️ / ❌ buttons |
 | Zip link, Straight to Drive | A 3 MB zip of 848 small files | Unpacked on the Mac, uploaded (about 6½ minutes), Mac copy gone |
 
 **Not yet checked by hand:** the clipboard banner, magnet links clicked in a browser, notifications, the
