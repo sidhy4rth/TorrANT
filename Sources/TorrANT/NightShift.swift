@@ -301,7 +301,7 @@ struct GrabberView: View {
             }
             .foregroundStyle(up.straightToDrive ? Theme.safe : Theme.muted)
         }
-        .padding(.leading, 86)
+        .padding(.leading, 22)
         .padding(.trailing, 18)
         .frame(height: 54)
         .background(Theme.deep)

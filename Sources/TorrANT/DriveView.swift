@@ -314,7 +314,7 @@ struct DriveView: View {
                     stats
                     HStack(alignment: .firstTextBaseline) {
                         Text("In your Drive").font(Theme.display(22))
-                        Text("TorrANT folder").font(Theme.body(14)).foregroundStyle(Theme.muted)
+                        Text(Colony.shared.driveDir?.lastPathComponent ?? "TorrANT Library").font(Theme.body(14)).foregroundStyle(Theme.muted)
                         Spacer()
                         legend(Theme.red, "Uploading")
                         legend(Theme.safe, "In Drive")
@@ -360,7 +360,7 @@ struct DriveView: View {
                 Button("Open in Finder") { NSWorkspace.shared.open(dir) }.buttonStyle(GhostButtonStyle())
             }
         }
-        .padding(.leading, 86)
+        .padding(.leading, 22)
         .padding(.trailing, 18)
         .frame(height: 54)
         .background(Theme.deep)
@@ -475,7 +475,7 @@ struct DriveView: View {
             Text("Google Drive isn't set up.").font(Theme.display(24))
             Text("Install Google Drive for desktop and sign in, then come back.\nOr pick any folder in Settings.")
                 .font(Theme.body(15)).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
-            SettingsLink { Text("Open Settings") }.buttonStyle(GhostButtonStyle())
+            Button("Open Settings") { Nav.shared.section = .settings }.buttonStyle(GhostButtonStyle())
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

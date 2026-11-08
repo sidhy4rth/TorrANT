@@ -326,7 +326,7 @@ struct LibraryView: View {
             .buttonStyle(.plain)
             .help("Look for new things in Drive")
         }
-        .padding(.leading, 86)
+        .padding(.leading, 22)
         .padding(.trailing, 18)
         .frame(height: 54)
         .background(Theme.deep)

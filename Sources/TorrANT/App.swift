@@ -15,38 +15,16 @@ struct TorrANTApp: App {
     }
 
     var body: some Scene {
+        // One window for everything: Downloads, Library, Google Drive and the Link Grabber
+        // are sections in its sidebar, not separate windows.
         Window("TorrANT", id: "colony") {
-            ColonyView()
-                .frame(minWidth: 1080, minHeight: 680)
+            RootView()
+                .frame(minWidth: 1240, minHeight: 700)
                 .preferredColorScheme(.dark)
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1280, height: 800)
+        .defaultSize(width: 1460, height: 880)
         .commands { ColonyCommands() }
-
-        Window("Link Grabber", id: "grabber") {
-            GrabberView()
-                .frame(minWidth: 980, minHeight: 600)
-                .preferredColorScheme(.dark)
-        }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1120, height: 720)
-
-        Window("Library", id: "library") {
-            LibraryView()
-                .frame(minWidth: 900, minHeight: 620)
-                .preferredColorScheme(.dark)
-        }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1180, height: 800)
-
-        Window("Google Drive", id: "drive") {
-            DriveView()
-                .frame(minWidth: 900, minHeight: 600)
-                .preferredColorScheme(.dark)
-        }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1080, height: 720)
 
         MenuBarExtra {
             AntCam()
@@ -55,9 +33,7 @@ struct TorrANTApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Settings {
-            SettingsView().preferredColorScheme(.dark)
-        }
+
     }
 }
 
@@ -98,7 +74,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct ColonyCommands: Commands {
     @Environment(\.openWindow) private var openWindow
+
+    /// Switch the one window to a section (and bring it up if it was closed).
+    private func show(_ s: Nav.Section) {
+        Nav.shared.section = s
+        openWindow(id: "colony")
+        NSApp.activate()
+    }
+
     var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { show(.settings) }.keyboardShortcut(",", modifiers: .command)
+        }
         CommandGroup(replacing: .newItem) {
             Button("Send the Ants to the Clipboard Link") {
                 if let s = NSPasteboard.general.string(forType: .string) { Task { await Colony.shared.send(s) } }
@@ -111,11 +98,16 @@ struct ColonyCommands: Commands {
             Button("Wake All Ants") { Task { await Colony.shared.wakeAll() } }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
             Divider()
-            Button("Google Drive Uploads") { openWindow(id: "drive") }
+            ForEach(Nav.Section.allCases.filter { $0 != .settings }) { s in
+                Button(s == .grabber ? "Link Grabber & Night Shift" : s.title) { show(s) }
+                    .keyboardShortcut(s.key, modifiers: .command)
+            }
+            Divider()
+            Button("Google Drive Uploads") { show(.drive) }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
-            Button("Library") { openWindow(id: "library") }
+            Button("Library") { show(.library) }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
-            Button("Link Grabber & Night Shift") { openWindow(id: "grabber") }
+            Button("Link Grabber & Night Shift") { show(.grabber) }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
         }
     }
@@ -326,7 +318,7 @@ struct SettingsView: View {
             Spacer()
         }
         .padding(24)
-        .frame(width: 520, height: 480)
+        .frame(maxWidth: 640, alignment: .leading)
         .background(Theme.soil)
         .foregroundStyle(Theme.text)
     }

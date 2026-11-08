@@ -4,7 +4,6 @@ import UniformTypeIdentifiers
 /// Screen 1: The Colony.
 struct ColonyView: View {
     @Bindable private var colony = Colony.shared
-    @Environment(\.openWindow) private var openWindow
     @State private var input = ""
     @State private var dropTargeted = false
 
@@ -36,53 +35,11 @@ struct ColonyView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            AntGlyph(color: Theme.red).frame(width: 32)
-            (Text("Torr") + Text("ANT").foregroundColor(Theme.red))
-                .font(Theme.display(24))
+            Text("Downloads").font(Theme.display(24))
             Text("No crumb too big.").font(Theme.body(14)).foregroundStyle(Theme.muted)
             Spacer()
-            HStack(spacing: 8) {
-                Circle().fill(colony.online ? Theme.safe : Theme.swarm).frame(width: 8, height: 8)
-                Text(colony.online ? "Colony online · \(colony.antsOut) ants out" : (colony.problem ?? "Waking the colony…"))
-                    .font(Theme.body(14)).foregroundStyle(Theme.muted)
-            }
-            DriveModeSwitch()
-            Button { openWindow(id: "library") } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "play.rectangle.on.rectangle").font(.system(size: 14, weight: .semibold))
-                    Text("Library").font(Theme.body(14, .semibold))
-                }
-                .padding(.horizontal, 12)
-                .frame(height: 34)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
-            }
-            .buttonStyle(.plain)
-            .help("Your movies and shows in Drive (⇧⌘L)")
-            Button { openWindow(id: "drive") } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: colony.carrying.isEmpty ? "icloud.and.arrow.up" : "icloud.and.arrow.up.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Google Drive").font(Theme.body(14, .semibold))
-                }
-                .padding(.horizontal, 12)
-                .frame(height: 34)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
-            }
-            .buttonStyle(.plain)
-            .help("Uploads to Google Drive (⇧⌘D)")
-            SettingsLink {
-                Image(systemName: "gearshape").font(.system(size: 14, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
-            }
-            .buttonStyle(.plain)
-            .help("Settings")
         }
-        .padding(.leading, 86)
-        .padding(.trailing, 18)
+        .padding(.horizontal, 22)
         .frame(height: 54)
         .background(Theme.deep)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.surface2).frame(height: 1) }
@@ -138,7 +95,7 @@ struct ColonyView: View {
                     .font(Theme.body(14))
                     .onSubmit(sendInput)
             }
-            Button { openWindow(id: "grabber") } label: {
+            Button { Nav.shared.section = .grabber } label: {
                 Image(systemName: "link.badge.plus").font(.system(size: 15, weight: .semibold))
                     .frame(width: 40, height: 40)
             }
