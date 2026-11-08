@@ -199,13 +199,30 @@ final class NightShift {
         return f.string(from: d)
     }
 
-    func add(_ grabs: [Grab]) {
+    @discardableResult
+    func add(_ grabs: [Grab]) -> [Item] {
         let have = Set(items.filter { !$0.sent }.map(\.url))
+        var added: [Item] = []
         for g in grabs where !have.contains(g.url) {
-            items.append(Item(url: g.url, name: g.name, size: g.size))
+            let it = Item(url: g.url, name: g.name, size: g.size)
+            items.append(it); added.append(it)
         }
         save()
         Colony.shared.say("Night shift: \(waiting.count) waiting for \(NightShift.clock(start))")
+        return added
+    }
+
+    /// Skip the wait for some queued items (from the phone's ▶️ buttons).
+    func startNow(_ ids: [UUID]) async -> Int {
+        var n = 0
+        for id in ids {
+            guard let it = items.first(where: { $0.id == id && !$0.sent }) else { continue }
+            if await Colony.shared.send(it.url), let j = items.firstIndex(where: { $0.id == id }) {
+                items[j].sent = true; n += 1
+            }
+        }
+        save()
+        return n
     }
 
     func remove(_ id: UUID) { items.removeAll { $0.id == id }; save() }
@@ -256,7 +273,7 @@ final class NightShift {
                 }
             }
             colony.say("Night shift: sent \(todo.count) download\(todo.count == 1 ? "" : "s")")
-            PhoneLink.shared.notify("🌙 Night shift started: \(todo.count) download\(todo.count == 1 ? "" : "s") on the way")
+            PhoneLink.shared.notify("🌙 Night shift started: \(todo.count) download\(todo.count == 1 ? "" : "s") on the way", live: true)
             save()
         } else if running {
             // Window's over: pause anything still on the trail; it carries on tomorrow night.

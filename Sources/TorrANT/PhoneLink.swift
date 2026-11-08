@@ -94,14 +94,17 @@ final class PhoneLink {
     // MARK: Listening (long polling: one request waits up to 50 s for messages)
 
     private func listen(_ token: String) async {
+        await setUpMenu(token)
         while !Task.isCancelled {
-            let r = await api(token, "getUpdates", ["timeout": 50, "offset": offset, "allowed_updates": ["message"]], wait: 60)
+            let r = await api(token, "getUpdates", ["timeout": 50, "offset": offset,
+                                                    "allowed_updates": ["message", "callback_query"]], wait: 60)
             guard let updates = r as? [[String: Any]] else {
                 try? await Task.sleep(for: .seconds(5))   // offline or Telegram hiccup: try again shortly
                 continue
             }
             for u in updates {
                 if let id = (u["update_id"] as? NSNumber)?.int64Value { offset = max(offset, id + 1) }
+                if let q = u["callback_query"] as? [String: Any] { await tapped(q, token: token); continue }
                 guard let m = u["message"] as? [String: Any],
                       let chat = (m["chat"] as? [String: Any])?["id"] as? NSNumber,
                       let text = (m["text"] as? String) ?? (m["caption"] as? String) else { continue }
@@ -110,6 +113,35 @@ final class PhoneLink {
             }
         }
     }
+
+    // MARK: Buttons and menus
+
+    /// The "/" command list Telegram shows in the chat.
+    private func setUpMenu(_ token: String) async {
+        await api(token, "setMyCommands", ["commands": [
+            ["command": "status", "description": "Live view of what's downloading"],
+            ["command": "queue", "description": "Tonight's night shift"],
+            ["command": "pause", "description": "Let all the ants rest"],
+            ["command": "resume", "description": "Wake all the ants"],
+            ["command": "help", "description": "How to use this bot"]]])
+    }
+
+    /// Big buttons that sit under the chat box.
+    private var keyboard: [String: Any] {
+        ["keyboard": [[["text": "📊 Status"], ["text": "🌙 Queue"]], [["text": "⏸ Pause all"], ["text": "▶️ Resume all"]]],
+         "resize_keyboard": true, "is_persistent": true]
+    }
+
+    nonisolated(unsafe) static let noButtons: [String: Any] = ["inline_keyboard": [[[String: Any]]]()]
+
+    private func inline(_ rows: [[(String, String)]]) -> [String: Any] {
+        ["inline_keyboard": rows.map { $0.map { ["text": $0.0, "callback_data": $0.1] } }]
+    }
+
+    /// Buttons under a "queued" reply point at the items it added (callback data is capped at 64 bytes).
+    @ObservationIgnored private var batches: [String: [UUID]] = [:]
+
+    // MARK: Messages
 
     private func handle(_ text: String, chat: Int64, from: String, token: String) async {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -121,7 +153,8 @@ final class PhoneLink {
                 UserDefaults.standard.set(from, forKey: "phonePairedName")
                 state = .paired
                 Colony.shared.say("Phone paired: \(from) on Telegram")
-                await send(token, "🐜 Paired with TorrANT on your Mac.\n\nShare any link here and it goes to tonight's night shift. Add \"now\" to start it straight away. Send \"status\" any time.")
+                await api(token, "sendMessage", ["chat_id": chatID, "reply_markup": keyboard, "text":
+                    "🐜 Paired with TorrANT on your Mac!\n\nShare any link here and the ants carry it on tonight's night shift. Add \"now\" to start straight away.\n\nThe buttons below show what's happening, live."])
             } else {
                 await api(token, "sendMessage", ["chat_id": chat, "text": "This bot belongs to someone's TorrANT. To pair, send /pair followed by the code shown in TorrANT's Settings."])
             }
@@ -129,18 +162,36 @@ final class PhoneLink {
         }
         guard chat == chatID else { return }   // anyone else is ignored
 
-        let lower = t.lowercased()
-        if lower == "status" || lower == "/status" { await send(token, statusText()); return }
-        if lower == "/start" || lower == "help" || lower == "/help" {
-            await send(token, "Share or paste links (pages, files, magnets).\n• They wait for the night shift (\(NightShift.clock(NightShift.shared.start))–\(NightShift.clock(NightShift.shared.end))).\n• Add \"now\" to start straight away.\n• \"status\" shows what's waiting and downloading.")
-            return
+        // "📊 Status", "/status" and "status" all mean the same thing.
+        let word = String(t.lowercased().unicodeScalars.filter { CharacterSet.letters.contains($0) || $0 == " " })
+            .trimmingCharacters(in: .whitespaces)
+        switch word {
+        case "status": await startLive(token); return
+        case "queue": await sendQueue(token); return
+        case "pause", "pause all":
+            await Colony.shared.restAll()
+            await reply(token, "⏸ All the ants are resting. Tap ▶️ Resume all when you're ready."); return
+        case "resume", "resume all":
+            if NetWatch.shared.metered { await reply(token, "📵 The Mac is on a hotspot or Low Data Mode, so nothing resumes until it's on Wi-Fi."); return }
+            await Colony.shared.wakeAll()
+            await startLive(token); return
+        case "start", "help":
+            await reply(token, """
+            🐜 How it works
+            • Share or paste links: files, pages full of downloads, or magnets.
+            • They wait for the night shift (\(NightShift.clock(NightShift.shared.start))–\(NightShift.clock(NightShift.shared.end))). Add "now" to start straight away.
+            • 📊 Status: a live view that updates itself.
+            • 🌙 Queue: tonight's list, with buttons to start or remove things.
+            • When a movie reaches your Library you get its poster here.
+            """); return
+        default: break
         }
 
-        let now = lower.split(whereSeparator: { !$0.isLetter }).contains("now")
+        let now = t.lowercased().split(whereSeparator: { !$0.isLetter }).contains("now")
         let r = await LinkGrabber.grab(t)
         guard !r.found.isEmpty else {
-            await send(token, r.failed.isEmpty ? "No download links in that. Send a link to a file, a page with downloads, or a magnet."
-                                               : "Couldn't open \(r.failed.joined(separator: ", ")).")
+            await reply(token, r.failed.isEmpty ? "🤔 No download links in that. Send a link to a file, a page with downloads, or a magnet."
+                                                : "🚧 Couldn't open \(r.failed.joined(separator: ", ")).")
             return
         }
         var grabs = Array(r.found.prefix(25))
@@ -149,54 +200,232 @@ final class PhoneLink {
             grabs[i].size = size
             if let name, !name.isEmpty { grabs[i].name = name }
         }
-        let list = grabs.prefix(8).map { "• \($0.name)" + ($0.size.map { " (\(Fmt.bytes($0)))" } ?? "") }.joined(separator: "\n")
+        let total = grabs.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
+        let list = grabs.prefix(8).map { "• \($0.name)" + ($0.size.map { " · \(Fmt.bytes($0))" } ?? "") }.joined(separator: "\n")
         let more = grabs.count > 8 ? "\n…and \(grabs.count - 8) more" : ""
         let capped = r.found.count > 25 ? "\n(First 25 of \(r.found.count) links on that page.)" : ""
-        let dest = Uploader.shared.straightToDrive ? "Google Drive" : "the Mac"
+        let dest = Uploader.shared.straightToDrive ? "☁️ Google Drive" : "💻 the Mac"
+        let size = total > 0 ? " · \(Fmt.bytes(total))" : ""
 
         if now && !NetWatch.shared.metered {
             for g in grabs { await Colony.shared.send(g.url) }
-            await send(token, "▶️ Starting now → \(dest):\n\(list)\(more)\(capped)")
+            await reply(token, "▶️ The ants are on it → \(dest)\(size)\n\(list)\(more)\(capped)")
+            await startLive(token)
         } else {
-            NightShift.shared.add(grabs)
-            let why = now ? "\nThe Mac is on a hotspot or Low Data Mode, so it waits for Wi-Fi." : ""
-            await send(token, "🌙 Queued for tonight → \(dest):\n\(list)\(more)\(capped)\n\n\(nightLine())\(why)")
+            let added = NightShift.shared.add(grabs)
+            let key = String(UUID().uuidString.prefix(8))
+            batches[key] = added.map(\.id)
+            let why = now ? "\n📵 The Mac is on a hotspot or Low Data Mode, so it waits for Wi-Fi." : ""
+            await api(token, "sendMessage", [
+                "chat_id": chatID, "disable_web_page_preview": true,
+                "text": "🌙 Queued for tonight → \(dest)\(size)\n\(list)\(more)\(capped)\n\n\(nightLine())\(why)",
+                "reply_markup": inline([[(added.count > 1 ? "▶️ Start all now" : "▶️ Start now", "nb:\(key)"),
+                                         (added.count > 1 ? "❌ Remove all" : "❌ Remove", "rb:\(key)")]])])
+        }
+    }
+
+    /// A button under one of the bot's messages was tapped.
+    private func tapped(_ q: [String: Any], token: String) async {
+        let qid = q["id"] as? String ?? ""
+        let msg = q["message"] as? [String: Any]
+        let chat = ((msg?["chat"] as? [String: Any])?["id"] as? NSNumber)?.int64Value ?? 0
+        let mid = (msg?["message_id"] as? NSNumber)?.intValue ?? 0
+        let oldText = msg?["text"] as? String ?? ""
+        guard chat == chatID, chatID != 0, let data = q["data"] as? String else {
+            await api(token, "answerCallbackQuery", ["callback_query_id": qid]); return
+        }
+        let parts = data.split(separator: ":", maxSplits: 1).map(String.init)
+        let arg = parts.count > 1 ? parts[1] : ""
+        func answer(_ s: String) async { await api(token, "answerCallbackQuery", ["callback_query_id": qid, "text": s]) }
+        func edit(_ text: String, _ markup: [String: Any] = PhoneLink.noButtons) async {
+            await api(token, "editMessageText", ["chat_id": chatID, "message_id": mid, "text": text,
+                                                 "reply_markup": markup, "disable_web_page_preview": true])
+        }
+
+        switch parts[0] {
+        case "nb", "go":
+            if NetWatch.shared.metered { await answer("📵 On a hotspot: waits for Wi-Fi"); return }
+            let ids = parts[0] == "nb" ? (batches[arg] ?? []) : (UUID(uuidString: arg).map { [$0] } ?? [])
+            let n = await NightShift.shared.startNow(ids)
+            await answer(n > 0 ? "▶️ Started \(n)" : "Already started or removed")
+            if parts[0] == "nb" { await edit(oldText + "\n\n▶️ Started now") } else { await edit(queueText(), queueButtons()) }
+            if n > 0 { await startLive(token) }
+        case "rb", "rm":
+            let ids = parts[0] == "rb" ? (batches[arg] ?? []) : (UUID(uuidString: arg).map { [$0] } ?? [])
+            ids.forEach { NightShift.shared.remove($0) }
+            await answer("❌ Removed")
+            if parts[0] == "rb" { await edit(oldText + "\n\n❌ Removed from tonight") } else { await edit(queueText(), queueButtons()) }
+        case "refresh":
+            await answer("Updated")
+            await edit(dashboard(), busy ? liveButtons : PhoneLink.noButtons)
+        case "pauseall":
+            await Colony.shared.restAll(); await answer("⏸ Paused")
+            await edit(dashboard(), liveButtons)
+        case "resumeall":
+            if NetWatch.shared.metered { await answer("📵 On a hotspot: waits for Wi-Fi"); return }
+            await Colony.shared.wakeAll(); await answer("▶️ Resumed")
+            await startLive(token)
+        default:
+            await answer("")
+        }
+    }
+
+    // MARK: Queue
+
+    private func queueText() -> String {
+        let n = NightShift.shared
+        let w = n.waiting
+        guard !w.isEmpty else { return "🌙 Nothing queued for tonight.\nShare a link here to add one." }
+        let list = w.prefix(10).enumerated().map { i, it in
+            "\(i + 1). \(it.name)" + (it.size.map { " · \(Fmt.bytes($0))" } ?? "")
+        }.joined(separator: "\n")
+        let more = w.count > 10 ? "\n…and \(w.count - 10) more" : ""
+        return "🌙 Tonight's night shift · \(w.count) waiting" + (n.waitingBytes > 0 ? " · \(Fmt.bytes(n.waitingBytes))" : "")
+            + "\nStarts \(NightShift.clock(n.start)), stops \(NightShift.clock(n.end))\n\n\(list)\(more)"
+    }
+
+    private func queueButtons() -> [String: Any] {
+        let rows = NightShift.shared.waiting.prefix(10).enumerated().map { i, it in
+            [("▶️ \(i + 1) now", "go:\(it.id.uuidString)"), ("❌ \(i + 1)", "rm:\(it.id.uuidString)")]
+        }
+        return inline(Array(rows))
+    }
+
+    private func sendQueue(_ token: String) async {
+        await api(token, "sendMessage", ["chat_id": chatID, "text": queueText(), "reply_markup": queueButtons(),
+                                         "disable_web_page_preview": true])
+    }
+
+    // MARK: Live view: one message that keeps updating itself
+
+    @ObservationIgnored private var liveTask: Task<Void, Never>?
+
+    private var busy: Bool {
+        Colony.shared.trail.contains { $0.state == .active || $0.state == .waiting } || !Uploader.shared.jobs.isEmpty
+            || !Colony.shared.unpacking.isEmpty
+    }
+
+    private var liveButtons: [String: Any] {
+        inline([[("🔄 Refresh", "refresh"), ("⏸ Pause all", "pauseall"), ("▶️ Resume", "resumeall")]])
+    }
+
+    private static func bar(_ p: Double) -> String {
+        let n = max(0, min(10, Int((p * 10).rounded())))
+        return String(repeating: "▰", count: n) + String(repeating: "▱", count: 10 - n)
+    }
+
+    private static func short(_ s: String) -> String { s.count > 34 ? String(s.prefix(32)) + "…" : s }
+
+    private func dashboard() -> String {
+        let colony = Colony.shared
+        var lines = ["🐜 TorrANT · live"]
+        let trail = colony.trail.filter { $0.state == .active || $0.state == .waiting || $0.state == .paused }
+        for c in trail.prefix(6) {
+            let icon = c.state == .paused ? "⏸" : (c.kind == .swarm ? "🐜" : "⬇️")
+            var info = "\(Int(c.progress * 100))%"
+            if c.state == .active, c.down > 0 {
+                info += " · \(Fmt.speed(c.down))"
+                if c.total > c.done { info += " · \(Fmt.eta(Double(c.total - c.done) / Double(c.down))) left" }
+            } else if c.state == .paused { info += " · resting" } else { info += " · waiting" }
+            lines.append("\n\(icon) \(PhoneLink.short(c.name))\n\(PhoneLink.bar(c.progress)) \(info)")
+        }
+        for name in colony.unpacking.values.prefix(3) { lines.append("\n📦 Unpacking \(PhoneLink.short(name))") }
+        for j in Uploader.shared.jobs.prefix(4) {
+            let p = j.size > 0 ? min(1, j.done / j.size) : 0
+            lines.append("\n☁️ \(PhoneLink.short(j.name))\n\(PhoneLink.bar(p)) \(Int(p * 100))% · \(Fmt.speed(Int(j.speed)))")
+        }
+        if lines.count == 1 { lines.append("\nAll quiet. The ants are resting 😴") }
+        lines.append("\n🌙 " + nightLine())
+        if NetWatch.shared.metered { lines.append("📵 Hotspot / Low Data Mode: night shift waits for Wi-Fi") }
+        lines.append("Updated \(NightShift.clock(Calendar.current.component(.hour, from: Date()) * 60 + Calendar.current.component(.minute, from: Date())))")
+        return lines.joined(separator: "\n")
+    }
+
+    /// Sends the live view, then edits it every 6 s until everything's done (at most 2 hours).
+    private func startLive(_ token: String) async {
+        liveTask?.cancel()
+        guard let r = await api(token, "sendMessage", ["chat_id": chatID, "text": dashboard(),
+                                                       "reply_markup": busy ? liveButtons : PhoneLink.noButtons]) as? [String: Any],
+              let mid = (r["message_id"] as? NSNumber)?.intValue, busy else { return }
+        liveTask = Task { [weak self] in
+            var last = ""
+            for _ in 0..<1200 {
+                try? await Task.sleep(for: .seconds(6))
+                guard let self, !Task.isCancelled else { return }
+                let still = self.busy
+                let text = self.dashboard() + (still ? "" : "\n\n✅ All done!")
+                if text != last {
+                    last = text
+                    await self.api(token, "editMessageText", ["chat_id": self.chatID, "message_id": mid, "text": text,
+                                                              "reply_markup": still ? self.liveButtons : PhoneLink.noButtons])
+                }
+                if !still { return }
+            }
         }
     }
 
     // MARK: Telling the phone
 
     /// Short update to the paired phone (night shift started, something finished).
-    func notify(_ text: String) {
+    func notify(_ text: String, live: Bool = false) {
         guard chatID != 0, let token = PhoneLink.loadToken() else { return }
-        Task { await send(token, text) }
+        Task {
+            await reply(token, text)
+            if live { await startLive(token) }
+        }
+    }
+
+    /// Something reached Drive: send its poster if the Library knows it (Drive takes a moment to list new things).
+    func announceReady(_ name: String) {
+        guard chatID != 0, let token = PhoneLink.loadToken() else { return }
+        Task {
+            for attempt in 0..<4 {
+                if attempt > 0 { try? await Task.sleep(for: .seconds(20)) }
+                await LibraryStore.shared.refresh()
+                let store = LibraryStore.shared
+                if let e = store.entries.first(where: { $0.url.lastPathComponent == name }) {
+                    let what = e.isShow ? "Season \(e.season ?? 1) · \(e.episodes.count) episodes" : (e.year.map(String.init) ?? "")
+                    let caption = "🍿 \(e.title)\(what.isEmpty ? "" : " · \(what)")\nIn your Library, ready to stream."
+                    if let poster = store.posters[e.posterKey], let img = try? Data(contentsOf: poster) {
+                        await sendPhoto(token, img, caption: caption)
+                    } else {
+                        await reply(token, caption)
+                    }
+                    return
+                }
+            }
+            await reply(token, "☁️ \(name) is in Google Drive")
+        }
     }
 
     private func nightLine() -> String {
         let n = NightShift.shared
-        guard n.on else { return "Night shift is off on the Mac, so nothing will start until it's on." }
-        return "\(n.waiting.count) waiting · starts at \(NightShift.clock(n.start))"
+        guard n.on else { return "Night shift is off on the Mac, so nothing starts until it's on." }
+        return n.waiting.isEmpty ? "Night shift: nothing waiting" : "\(n.waiting.count) waiting · starts at \(NightShift.clock(n.start))"
     }
 
-    private func statusText() -> String {
-        let colony = Colony.shared
-        let active = colony.trail.filter { $0.state == .active || $0.state == .waiting }
-        var lines = ["🐜 TorrANT on your Mac", nightLine()]
-        if !active.isEmpty {
-            lines.append("Downloading now:")
-            lines += active.prefix(6).map { "• \($0.name) — \(Int($0.progress * 100))%" }
-        }
-        if !Uploader.shared.jobs.isEmpty {
-            lines.append("Going up to Drive:")
-            lines += Uploader.shared.jobs.prefix(4).map { "• \($0.name)" }
-        }
-        if NetWatch.shared.metered { lines.append("On a hotspot / Low Data Mode: night shift waits for Wi-Fi.") }
-        if active.isEmpty && Uploader.shared.jobs.isEmpty && NightShift.shared.waiting.isEmpty { lines.append("All quiet.") }
-        return lines.joined(separator: "\n")
+    private func reply(_ token: String, _ text: String) async {
+        await api(token, "sendMessage", ["chat_id": chatID, "text": text, "disable_web_page_preview": true,
+                                         "reply_markup": keyboard])
     }
 
-    private func send(_ token: String, _ text: String) async {
-        await api(token, "sendMessage", ["chat_id": chatID, "text": text, "disable_web_page_preview": true])
+    private func sendPhoto(_ token: String, _ img: Data, caption: String) async {
+        guard let url = URL(string: "https://api.telegram.org/bot\(token)/sendPhoto") else { return }
+        let b = "torrant-\(UUID().uuidString)"
+        var body = Data()
+        func field(_ n: String, _ v: String) {
+            body.append(Data("--\(b)\r\nContent-Disposition: form-data; name=\"\(n)\"\r\n\r\n\(v)\r\n".utf8))
+        }
+        field("chat_id", String(chatID))
+        field("caption", caption)
+        body.append(Data("--\(b)\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"poster.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".utf8))
+        body.append(img)
+        body.append(Data("\r\n--\(b)--\r\n".utf8))
+        var req = URLRequest(url: url, timeoutInterval: 30)
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(b)", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        _ = try? await URLSession.shared.data(for: req)
     }
 
     @discardableResult

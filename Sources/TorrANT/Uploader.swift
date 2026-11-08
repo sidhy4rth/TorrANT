@@ -166,7 +166,7 @@ final class Uploader {
                 if ok { ok = await confirmInDrive(name, size: size) }
                 if ok {
                     Colony.shared.say("\(name) is in Google Drive ✓ Nothing left on this Mac")
-                    PhoneLink.shared.notify("☁️ \(name) is in Google Drive, ready to stream")
+                    PhoneLink.shared.announceReady(name)
                 } else if (st["success"] as? Bool) == true {
                     Colony.shared.say("\(name) uploaded, but it isn't showing in \(Uploader.folder) yet. Check Drive")
                 } else if err.contains("invalid_grant") || err.contains("token") {
