@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import FileProvider
 import UniformTypeIdentifiers
 
 /// One thing in the TorrANT folder on Google Drive (a file, or a folder added up).
@@ -164,7 +165,7 @@ final class DriveWatcher {
                             uploaded: v.ubiquitousItemIsUploaded ?? false,
                             uploading: v.ubiquitousItemIsUploading ?? false,
                             onMac: Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0),
-                            problem: v.ubiquitousItemUploadingError?.localizedDescription)
+                            problem: DriveWatcher.describe(v.ubiquitousItemUploadingError))
         }
 
         return top.compactMap { u in
@@ -181,6 +182,13 @@ final class DriveWatcher {
             guard let s = stat(u) else { return nil }
             return EntryStat(url: u, isFolder: false, date: date, files: [s])
         }
+    }
+
+    /// Drive reports "can't reach the server" both when offline and when syncing is paused.
+    nonisolated static func describe(_ e: Error?) -> String? {
+        guard let e = e as NSError? else { return nil }
+        if e.domain == NSFileProviderErrorDomain && e.code == -1004 { return "paused" }
+        return e.localizedDescription
     }
 
     // MARK: Actions
@@ -488,12 +496,14 @@ struct DriveRow: View {
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
-        .help(item.problem ?? "Double-click to play")
+        .help(item.problem == "paused" ? "Google Drive can't upload right now. Syncing is paused or there's no internet."
+              : item.problem ?? "Double-click to play")
         .contextMenu { menu }
     }
 
     private var statusText: String {
         if watcher.busy.contains(item.id) { return "Working…" }
+        if item.problem == "paused" { return "Drive paused or offline" }
         if item.problem != nil { return "Upload problem" }
         if item.uploaded { return "In Drive ✓" }
         if item.uploading || item.sent > 0 { return "\(Int(item.fraction * 100))%" }
@@ -501,6 +511,7 @@ struct DriveRow: View {
     }
 
     private var statusColor: Color {
+        if item.problem == "paused" { return Theme.muted }
         if item.problem != nil { return Theme.poison }
         return item.uploaded ? Theme.safe : item.uploading ? Theme.red : Theme.muted
     }

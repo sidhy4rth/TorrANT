@@ -169,7 +169,8 @@ struct SavedSwarm: Codable, Hashable {
 
 enum Fmt {
     static func bytes(_ b: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: b, countStyle: .file)
+        let f = ByteCountFormatter(); f.countStyle = .file; f.allowsNonnumericFormatting = false
+        return f.string(fromByteCount: b)
     }
     static func speed(_ bps: Int) -> String {
         bps <= 0 ? "0 KB/s" : ByteCountFormatter.string(fromByteCount: Int64(bps), countStyle: .file) + "/s"
