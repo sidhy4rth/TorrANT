@@ -45,9 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Colony.shared.boot()
             PhoneLink.shared.start()
             // Give macOS a moment to say whether this is a hotspot before preloading anything.
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(2))
-                Streamer.shared.warmUp()   // stream server + preload ready before the first ▶
+            // A plain main-queue timer: a Task started here never woke from its sleep (8 Nov).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                MainActor.assumeIsolated { Streamer.shared.warmUp() }   // stream server + preload ready before the first ▶
             }
             NightShift.shared.begin()
         }

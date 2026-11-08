@@ -17,7 +17,7 @@ final class Streamer {
     @ObservationIgnored private let user = "ant"
     @ObservationIgnored private let pass = UUID().uuidString.replacingOccurrences(of: "-", with: "")
     @ObservationIgnored private var signIn: Process?
-    @ObservationIgnored private var serverLog: Pipe?
+    private var serverLogURL: URL { support.appendingPathComponent("rclone-serve.log") }
     @ObservationIgnored private var player: Process?
     @ObservationIgnored private var vlcPort = 0
     @ObservationIgnored private let vlcPass = UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -299,9 +299,9 @@ final class Streamer {
                            // Small first read so a jump starts fast, then doubling to big reads.
                            "--vfs-read-chunk-size", "8M", "--vfs-read-chunk-size-limit", "off",
                            "--buffer-size", "16M", "--dir-cache-time", "1h"]
-            let err = Pipe()
-            p.standardOutput = Pipe(); p.standardError = err
-            serverLog = err
+            // rclone's messages go to a log file: an unread pipe fills up and freezes it.
+            FileManager.default.createFile(atPath: serverLogURL.path, contents: nil)
+            if let h = try? FileHandle(forWritingTo: serverLogURL) { p.standardOutput = h; p.standardError = h }
             do { try p.run() } catch { continue }
             // Ready when it answers on the port.
             for _ in 0..<40 {
@@ -314,7 +314,7 @@ final class Streamer {
             }
             p.terminate()
         }
-        if let log = serverLog, let text = String(data: log.fileHandleForReading.availableData, encoding: .utf8),
+        if let text = try? String(contentsOf: serverLogURL, encoding: .utf8),
            text.contains("invalid_grant") || text.contains("token expired") {
             state = .notSetUp
             Colony.shared.say("Google wants you to sign in again for streaming (it asks about once a week)")
