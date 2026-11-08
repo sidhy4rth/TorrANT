@@ -24,6 +24,14 @@ struct TorrANTApp: App {
         .defaultSize(width: 1280, height: 800)
         .commands { ColonyCommands() }
 
+        Window("Library", id: "library") {
+            LibraryView()
+                .frame(minWidth: 900, minHeight: 620)
+                .preferredColorScheme(.dark)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1180, height: 800)
+
         Window("Google Drive", id: "drive") {
             DriveView()
                 .frame(minWidth: 900, minHeight: 600)
@@ -96,6 +104,8 @@ struct ColonyCommands: Commands {
             Divider()
             Button("Google Drive Uploads") { openWindow(id: "drive") }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
+            Button("Library") { openWindow(id: "library") }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
         }
     }
 }

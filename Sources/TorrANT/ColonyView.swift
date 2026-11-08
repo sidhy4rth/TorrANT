@@ -47,6 +47,18 @@ struct ColonyView: View {
                     .font(Theme.body(14)).foregroundStyle(Theme.muted)
             }
             DriveModeSwitch()
+            Button { openWindow(id: "library") } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "play.rectangle.on.rectangle").font(.system(size: 14, weight: .semibold))
+                    Text("Library").font(Theme.body(14, .semibold))
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
+            }
+            .buttonStyle(.plain)
+            .help("Your movies and shows in Drive (⇧⌘L)")
             Button { openWindow(id: "drive") } label: {
                 HStack(spacing: 7) {
                     Image(systemName: colony.carrying.isEmpty ? "icloud.and.arrow.up" : "icloud.and.arrow.up.fill")

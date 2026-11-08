@@ -19,8 +19,41 @@ final class Streamer {
     @ObservationIgnored private var signIn: Process?
     @ObservationIgnored private var serverLog: Pipe?
     @ObservationIgnored private var player: Process?
+    @ObservationIgnored private var vlcPort = 0
+    @ObservationIgnored private let vlcPass = UUID().uuidString.replacingOccurrences(of: "-", with: "")
 
-    static let videoKinds: Set<String> = ["mkv", "mp4", "m4v", "mov", "avi", "webm", "ts", "wmv", "flv"]
+    /// Every 3 s while VLC plays: which file, where you are, how long it is.
+    private func watchPlayer(_ p: Process) {
+        let (port, pass) = (vlcPort, vlcPass)
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            while p.isRunning {
+                if let s = await Streamer.vlcStatus(port: port, pass: pass) {
+                    WatchLog.shared.note(file: s.file, at: s.time, of: s.length)
+                }
+                try? await Task.sleep(for: .seconds(3))
+            }
+            WatchLog.shared.save()
+        }
+    }
+
+    nonisolated static func vlcStatus(port: Int, pass: String) async -> (file: String, time: Double, length: Double)? {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/requests/status.json") else { return nil }
+        var req = URLRequest(url: url, timeoutInterval: 2)
+        req.setValue("Basic " + Data(":\(pass)".utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let d = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (d["state"] as? String) == "playing" || (d["state"] as? String) == "paused",
+              let info = d["information"] as? [String: Any],
+              let cat = info["category"] as? [String: Any],
+              let meta = cat["meta"] as? [String: Any],
+              let file = meta["filename"] as? String else { return nil }
+        let time = (d["time"] as? Double) ?? Double(d["time"] as? Int ?? 0)
+        let length = (d["length"] as? Double) ?? Double(d["length"] as? Int ?? 0)
+        return (file.removingPercentEncoding ?? file, time, length)
+    }
+
+    nonisolated static let videoKinds: Set<String> = ["mkv", "mp4", "m4v", "mov", "avi", "webm", "ts", "wmv", "flv"]
 
     private var support: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -88,14 +121,32 @@ final class Streamer {
 
     // MARK: Playing
 
-    /// Plays a file: from disk if it's all here, otherwise streamed.
+    /// Plays a file: from disk if it's all here, otherwise streamed. Resumes where you left off.
     func play(_ file: URL) async {
-        if Streamer.isOnMac(file) {
-            launch([file.path])
-            return
+        await playList([file], title: file.deletingPathExtension().lastPathComponent)
+    }
+
+    /// Builds a VLC playlist (stream links, or the file itself when it's on this Mac). The first
+    /// video starts where you stopped last time; the rest start from the top.
+    private func playList(_ files: [URL], title: String) async {
+        var lines = ["#EXTM3U"]
+        for (i, e) in files.enumerated() {
+            let link: URL?
+            if Streamer.isOnMac(e) { link = e } else { link = await streamLink(for: e) }
+            guard let link else { return }
+            if i == 0, let at = WatchLog.shared.resumeAt(e.lastPathComponent) {
+                lines.append("#EXTVLCOPT:start-time=\(Int(at))")
+            }
+            lines.append("#EXTINF:-1,\(e.deletingPathExtension().lastPathComponent)")
+            lines.append(link.isFileURL ? link.path : link.absoluteString)
         }
-        guard let link = await streamLink(for: file) else { return }
-        launch([link.absoluteString])
+        let list = support.appendingPathComponent("playlists", isDirectory: true)
+        try? FileManager.default.createDirectory(at: list, withIntermediateDirectories: true)
+        let safe = title.replacingOccurrences(of: "/", with: "-")
+        let m3u = list.appendingPathComponent("\(safe).m3u")
+        try? lines.joined(separator: "\n").write(to: m3u, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: m3u.path)
+        launch([m3u.path])
     }
 
     @ObservationIgnored private var preloaded: Set<String> = []
@@ -158,20 +209,11 @@ final class Streamer {
             Colony.shared.say("No videos in \(folder.lastPathComponent)")
             return
         }
-        var lines = ["#EXTM3U"]
-        for e in eps {
-            let link: URL?
-            if Streamer.isOnMac(e) { link = e } else { link = await streamLink(for: e) }
-            guard let link else { return }
-            lines.append("#EXTINF:-1,\(e.deletingPathExtension().lastPathComponent)")
-            lines.append(link.isFileURL ? link.path : link.absoluteString)
+        // No episode picked: carry on from the one you were last watching.
+        if start == nil, let next = WatchLog.shared.nextUp(in: eps), let i = eps.firstIndex(of: next) {
+            eps = Array(eps[i...])
         }
-        let list = support.appendingPathComponent("playlists", isDirectory: true)
-        try? FileManager.default.createDirectory(at: list, withIntermediateDirectories: true)
-        let m3u = list.appendingPathComponent("\(folder.lastPathComponent).m3u")
-        try? lines.joined(separator: "\n").write(to: m3u, atomically: true, encoding: .utf8)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: m3u.path)
-        launch([m3u.path])
+        await playList(eps, title: folder.lastPathComponent)
     }
 
     /// One VLC window that TorrANT owns, set up to buffer like YouTube:
@@ -185,7 +227,12 @@ final class Streamer {
         if let old = player, old.isRunning { old.terminate() }
         let p = Process()
         p.executableURL = vlc.appendingPathComponent("Contents/MacOS/VLC")
-        p.arguments = ["--network-caching=1000", "--file-caching=1000",
+        vlcPort = Int.random(in: 40000...60000)
+        p.arguments = [// VLC's own little web interface, only on this Mac, so TorrANT can
+                       // see where you are and resume there next time.
+                       "--extraintf=http", "--http-host=127.0.0.1", "--http-port=\(vlcPort)",
+                       "--http-password=\(vlcPass)",
+                       "--network-caching=1000", "--file-caching=1000",
                        "--prefetch-buffer-size=131072", "--prefetch-read-size=1048576",
                        "--http-reconnect", "--no-video-title-show",
                        // No extra trips: don't scan the folder for linked .mkv parts,
@@ -197,6 +244,7 @@ final class Streamer {
             try p.run()
             player = p
             NSRunningApplication(processIdentifier: p.processIdentifier)?.activate()
+            watchPlayer(p)
         } catch {
             Colony.shared.say("Couldn't open VLC: \(error.localizedDescription)")
         }
