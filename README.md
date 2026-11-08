@@ -225,7 +225,7 @@ metered connection: a hotspot macOS flags as expensive, or any network with Low 
 ## The pocket remote
 
 TorrANT talks to a Telegram bot you own. It listens with one long request at a time (no server, no
-port opened on your Mac), and the bot's token sits in the macOS Keychain.
+port opened on your Mac), and the bot's token sits in a private file only your account can read.
 
 - **Share, don't type.** Any link shared to the bot is checked the same way the Link Grabber checks
   it, then queued for the night shift. Pages full of downloads are opened and searched. "now" in

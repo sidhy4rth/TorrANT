@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Your phone, through a private Telegram bot: share a link to the bot and it lands in the
 /// night shift (or starts now). The bot answers only the one Telegram chat that paired with
-/// the 6-digit code shown in Settings. The bot token is kept in the macOS Keychain.
+/// the 6-digit code shown in Settings. The bot token is kept in a private (owner-only) file.
 @MainActor @Observable
 final class PhoneLink {
     static let shared = PhoneLink()
@@ -20,25 +20,44 @@ final class PhoneLink {
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var code = ""
 
-    // MARK: Keychain
+    // MARK: Where the token lives
+    //
+    // A private file (owner-only, like rclone's Google sign-in), read once and kept in memory.
+    // It used to be in the Keychain, but an ad-hoc-signed app looks new to macOS after every
+    // build, so each read asked for your Mac password (8 Nov). Old Keychain copies move over once.
 
     private static let service = "com.sidhy4rth.torrant.telegram"
+    nonisolated(unsafe) private static var cached: String?
+
+    private static var tokenFile: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TorrANT/telegram-token")
+    }
 
     private static func loadToken() -> String? {
+        if let c = cached { return c }
+        if let t = try? String(contentsOf: tokenFile, encoding: .utf8), !t.isEmpty {
+            cached = t.trimmingCharacters(in: .whitespacesAndNewlines)
+            return cached
+        }
+        // One-time move from the Keychain (this read may ask for the password one last time).
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                 kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data,
+              let t = String(data: d, encoding: .utf8) else { return nil }
+        saveToken(t)
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as CFDictionary)
+        return t
     }
 
     private static func saveToken(_ t: String?) {
-        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
-        SecItemDelete(base as CFDictionary)
-        guard let t, !t.isEmpty else { return }
-        var add = base
-        add[kSecValueData as String] = Data(t.utf8)
-        SecItemAdd(add as CFDictionary, nil)
+        cached = t
+        let fm = FileManager.default
+        guard let t, !t.isEmpty else { try? fm.removeItem(at: tokenFile); return }
+        try? fm.createDirectory(at: tokenFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        fm.createFile(atPath: tokenFile.path, contents: Data(t.utf8), attributes: [.posixPermissions: 0o600])
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenFile.path)
     }
 
     var hasToken: Bool { PhoneLink.loadToken() != nil }
