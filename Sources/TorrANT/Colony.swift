@@ -77,7 +77,10 @@ final class Colony {
         Task { await watchClipboardForever() }
     }
 
-    func shutdown() { aria.stop() }
+    func shutdown() {
+        Awake.shared.release()
+        aria.stop()
+    }
 
     private func pollForever() async {
         while true {
@@ -173,6 +176,11 @@ final class Colony {
         if sorted != trail { trail = sorted }
         if newSeeding != seeding { seeding = newSeeding }
         if ants != antsOut { antsOut = ants }
+
+        let working = sorted.contains { $0.state == .active || $0.state == .waiting }
+        if Awake.shared.update(working: working) {
+            say(Awake.shared.holding ? "Keeping the Mac awake while the ants work" : "All quiet. The Mac can sleep again")
+        }
     }
 
     private func bringHome(_ c: Crumb) {

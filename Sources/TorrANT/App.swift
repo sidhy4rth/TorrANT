@@ -200,6 +200,7 @@ struct AntCam: View {
 struct SettingsView: View {
     @Bindable private var colony = Colony.shared
     @State private var magnetNote = ""
+    @State private var keepAwake = Awake.shared.enabled
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -220,6 +221,16 @@ struct SettingsView: View {
                 get: { colony.watchClipboard }, set: { colony.watchClipboard = $0 }))
                 .toggleStyle(.checkbox)
                 .font(Theme.body(14))
+            VStack(alignment: .leading, spacing: 2) {
+                Toggle("Keep the Mac awake while the ants work", isOn: Binding(
+                    get: { keepAwake }, set: { keepAwake = $0; Awake.shared.enabled = $0 }))
+                    .toggleStyle(.checkbox)
+                    .font(Theme.body(14))
+                Text("The screen can still turn off. Closing a MacBook's lid still pauses downloads unless it's plugged into a monitor.")
+                    .font(Theme.body(12)).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 20)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 Button("Open magnet links with TorrANT") {
                     Task {
@@ -243,7 +254,7 @@ struct SettingsView: View {
             Spacer()
         }
         .padding(24)
-        .frame(width: 520, height: 420)
+        .frame(width: 520, height: 480)
         .background(Theme.soil)
         .foregroundStyle(Theme.text)
     }
