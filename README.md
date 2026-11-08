@@ -5,17 +5,19 @@
   <img alt="TorrANT: torrents and links for your Mac" src="docs/assets/banner-light.png" width="720">
 </picture>
 
-### A Mac downloader for torrents and plain links, where every download is an ant carrying something home. No crumb too big.
+### A Mac downloader for torrents and plain links, where every download is an ant carrying something home, and winged ants fly it up to Google Drive. No crumb too big.
 
 ![macOS](https://img.shields.io/badge/macOS-14%2B-0A0A0A?logo=apple&logoColor=white)
 ![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)
 ![Engine](https://img.shields.io/badge/engine-aria2-D7261F)
 ![BitTorrent](https://img.shields.io/badge/BitTorrent-DHT_·_PEX_·_magnets-E5322D)
 ![Brave](https://img.shields.io/badge/Brave-catches_every_download-FB542B?logo=brave&logoColor=white)
-![Status](https://img.shields.io/badge/status-v0.1_·_private-5A5551)
+![Google Drive](https://img.shields.io/badge/Google_Drive-uploads_·_streams-1FA463?logo=googledrive&logoColor=white)
+![Status](https://img.shields.io/badge/status-v0.2_·_private-5A5551)
 
 [**What it does**](#what-it-does) ·
 [**Brave hand-off**](#catching-every-brave-download) ·
+[**Google Drive**](#sending-things-to-google-drive) ·
 [**Design notes**](docs/adr/README.md) ·
 [**Security**](SECURITY.md)
 
@@ -39,6 +41,7 @@
 <td align="center"><h3>36.3 MB/s</h3>measured<br><sub>four downloads at once,<br>1.5 GB home in about a minute</sub></td>
 <td align="center"><h3>Every frame</h3>live numbers<br><sub>speeds, sizes and bars<br>that never run backwards</sub></td>
 <td align="center"><h3>1 click</h3>from Brave<br><sub>every download over 1 MB<br>goes to the ants</sub></td>
+<td align="center"><h3>1 click</h3>to Google Drive<br><sub>seasons unpacked first,<br>so episodes stream</sub></td>
 <td align="center"><h3>0</h3>accounts, servers<br>or tracking</td>
 </tr>
 </table>
@@ -46,7 +49,8 @@
 **The story.** Ants live for the swarm. A torrent is a swarm: thousands of colonies sharing pieces of the
 same thing, and TorrANT's ants join in, bring the pieces home and share some back. But an ant never walks
 past food lying on the ground, so a plain download link is a crumb, grabbed on sight and dragged home by
-eight ants at once. Everything that arrives goes into the Anthill.
+eight ants at once. Everything that arrives goes into the Anthill. And when the Anthill gets full, winged ants
+fly the finds up to Google Drive, where they play straight from the cloud.
 
 The theme is there to make it fun; the screens are there to be read at a glance. Red means a swarm,
 bone means a crumb, and every label says what it means in plain words.
@@ -62,7 +66,9 @@ bone means a crumb, and every label says what it means in plain words.
 | **Catches every Brave download** | A small Brave extension hands each download to TorrANT with your login for that site, so files behind a sign-in still work. [How it works ↓](#catching-every-brave-download) |
 | **Lets you pick what to carry** | Opening a `.torrent` shows its files first: tick only the ones you want, choose the folder, start now or later. |
 | **Spots crumbs on the clipboard** | Copy a download link or a magnet anywhere and a *Crumb spotted!* banner offers to grab it. |
-| **Keeps the Mac awake** | While anything is downloading or queued, the Mac won't idle-sleep. The moment the trail is empty, it can sleep again. |
+| **Sends things to Google Drive** | A cloud button on every finished download moves it into Google Drive, after asking and saying how much data the upload will use. A Google Drive page shows each upload live. [How it works ↓](#sending-things-to-google-drive) |
+| **Unpacks zipped seasons** | A season that arrives as one `.zip` can't stream from Drive, so TorrANT unpacks it into a folder of episodes first, checks every byte came out, and bins the zip. Also on its own from the Anthill's right-click menu. |
+| **Keeps the Mac awake** | While anything is downloading, queued, unpacking or still uploading to Drive, the Mac won't idle-sleep. The screen can still turn off. The moment everything is done, it can sleep again. |
 | **Shares back, then stops** | Finished torrents keep feeding other colonies until they've given back as much as they took (1×), then rest. |
 | **Lives in the menu bar too** | *Ant Cam*: a pocket view of what's on the trail, with its own paste box. |
 | **Survives restarts** | Unfinished downloads pick up where they left off after a quit or a reboot. |
@@ -140,6 +146,33 @@ the macOS quirk that took a day to find: Brave reads helper registrations from *
 
 ---
 
+## Sending things to Google Drive
+
+TorrANT doesn't talk to Google itself. It works with **Google Drive for desktop**, which puts your Drive in
+Finder and does the uploading. TorrANT moves finished downloads into a `TorrANT` folder there and watches
+them go up.
+
+1. **Ask first.** The cloud button on an Anthill row (or *Move to Google Drive…* on right-click) asks before
+   anything moves, and says how much data the upload will use. A hidden button can't be clicked by accident.
+2. **Unpack zips.** A `.zip` season is unpacked into a folder of episodes, every byte checked against the
+   zip's own index, and only then is the zip put in the Trash. If anything is missing, the zip stays put
+   and nothing is uploaded.
+3. **Stop sharing, then move.** A torrent still feeding other colonies stops first, so no file is moved
+   while it's open. Names that clash get a number instead of overwriting.
+4. **Watch it fly.** The Google Drive page (⇧⌘D) shows every file in the folder: upload speed on the same
+   rolling digits as the main screen, a bar with the ant for each file, sizes counting up every frame, time
+   left, and whether each one is still on this Mac or lives only in the cloud.
+5. **Free up space.** Once a file is up, *Free up space* removes the Mac's copy. It stays in Drive and
+   streams when played. *Download to this Mac* brings it back for offline watching.
+
+**Moved, not copied.** Files dropped on the Google Drive page, or picked with *Choose files…*, are moved
+into Drive, so they stop filling up the Mac once they're uploaded.
+
+**Honest about pauses.** When Drive's syncing is paused or the Mac is offline, the page says *Drive paused
+or offline* instead of showing an error.
+
+---
+
 ## Checked by hand
 
 Everything below was run on a real Mac (macOS 26, Apple Silicon) and looked at, not just compiled.
@@ -154,10 +187,16 @@ Everything below was run on a real Mac (macOS 26, Apple Silicon) and looked at, 
 | Same-name files | A download whose name already existed in Downloads | Saved as `name.1.ext`, old file untouched |
 | Keep-awake | Downloads started, then finished | Mac held awake, then released: *"All quiet. The Mac can sleep again"* |
 | Dock icon | Fresh build, app launched | The sketched ant, not a blank tile |
+| Google Drive upload | Finished movies sent with the cloud button | Moved in seconds; four movies fully uploaded by Drive, live % per file on the Drive page |
+| Live upload numbers | Screenshots a quarter-second apart during an upload | Sizes, % and bars moved between Drive's reports and never went back |
+| Unpacking a season | A 10.7 GB, 13-episode `.zip` (the large ZIP64 kind) | Unpacked in 15 s, byte count matched, every episode a valid video |
+| Unpack, then Drive | A 6-episode season sent with the cloud button | Unpacked, zip moved to the Trash, all 6 episodes uploaded |
+| Keep-awake for uploads | App restarted while Drive was still uploading | Mac held awake: *"TorrANT is downloading or uploading"* |
+| Drive paused | Syncing paused mid-upload | *Drive paused or offline*, no false error |
 
 **Not yet checked by hand:** the clipboard banner, magnet links clicked in a browser, notifications, the
-Ant Cam panel, picking single files from a torrent, and drag & drop. They're built; they haven't been
-walked through on a real Mac yet.
+Ant Cam panel, picking single files from a torrent, drag & drop, and *Free up space* / *Download to this
+Mac* on the Google Drive page. They're built; they haven't been walked through on a real Mac yet.
 
 ---
 
@@ -176,6 +215,10 @@ walked through on a real Mac yet.
 - **Cookies wait on disk until a download finishes.** aria2 saves unfinished downloads, with their
   headers, in TorrANT's folder in your Library, so a signed-in download can resume after a restart.
 - **The sketched ant breathes.** Its idle animation costs about 9% CPU while the window is open.
+- **Google Drive needs Google Drive for desktop.** TorrANT moves files into its folder and reads its
+  upload state; it can't upload on its own or to any other cloud.
+- **Uploads use your data, and so does streaming.** A movie uploaded to Drive costs its size once to
+  upload and again every time it's streamed. On a capped connection, watch first and upload later.
 - **Two display bugs:** the Anthill shows "in 0 sec." for every arrival, and a torrent fetched from a link
   leaves its `.torrent` file listed in the Anthill as if it were a download.
 
@@ -206,7 +249,10 @@ The sketched ant, the icon and every screen are drawn in code in this repo.
 - **Never resume a stranger's file.** aria2 resumes only from its own progress files, never from a
   same-named file it finds lying around. [ADR 0004](docs/adr/0004-never-resume-a-file-we-did-not-start.md).
 - **Awake only while working.** Holding the Mac awake is a cost to the user, so it's held only while
-  something is downloading or queued, never for seeding.
+  something is downloading, queued, unpacking or uploading, never for seeding.
+- **Drive does the uploading.** Google's own app already handles sign-in, resuming and streaming.
+  TorrANT stays an app with no accounts and no servers: it moves files into the Drive folder and reads
+  the upload progress macOS already publishes for every file.
 
 ---
 
