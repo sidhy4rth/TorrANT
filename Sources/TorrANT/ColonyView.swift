@@ -392,6 +392,7 @@ struct TrailRow: View {
 struct HillRow: View {
     let item: HillItem
     @State private var hover = false
+    @State private var confirmDrive = false
     var body: some View {
         HStack(spacing: 12) {
             Circle().fill(item.kind == .swarm ? Theme.swarm : Theme.crumb).frame(width: 10, height: 10)
@@ -408,11 +409,17 @@ struct HillRow: View {
         .onTapGesture(count: 2) { Colony.shared.open(item) }
         .onTapGesture { Colony.shared.reveal(item.path) }
         .help("Click to show in Finder, double-click to open")
+        .confirmationDialog("Move \(item.name) to Google Drive?", isPresented: $confirmDrive) {
+            Button("Move to Google Drive") { Task { await Colony.shared.moveToDrive(item) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This uploads \(Fmt.bytes(item.size)) using your internet data.")
+        }
         .contextMenu {
             Button("Open") { Colony.shared.open(item) }
             Button("Show in Finder") { Colony.shared.reveal(item.path) }
             if !Colony.shared.isOnDrive(item) && Colony.shared.carrying[item.id] == nil {
-                Button("Move to Google Drive") { Task { await Colony.shared.moveToDrive(item) } }
+                Button("Move to Google Drive…") { confirmDrive = true }
             }
             Divider()
             Button("Forget it") { Colony.shared.forget(item) }
@@ -431,7 +438,7 @@ struct HillRow: View {
                 .help("On Google Drive")
                 .accessibilityLabel("On Google Drive")
         } else {
-            Button { Task { await colony.moveToDrive(item) } } label: {
+            Button { confirmDrive = true } label: {
                 Image(systemName: "icloud.and.arrow.up").font(.system(size: 12, weight: .bold))
                     .frame(width: 26, height: 26)
                     .background(Circle().fill(Theme.surface))
@@ -439,6 +446,7 @@ struct HillRow: View {
             .buttonStyle(.plain)
             .foregroundStyle(Theme.text)
             .opacity(hover ? 1 : 0)
+            .allowsHitTesting(hover)   // hidden means not clickable
             .help("Move to Google Drive")
             .accessibilityLabel("Move to Google Drive")
         }
