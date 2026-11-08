@@ -4,7 +4,7 @@
 
 const HOST = "com.sidhy4rth.torrant";
 const MIN_BYTES = 1024 * 1024;          // smaller files stay in Brave
-const REPLY_TIMEOUT_MS = 8000;
+const REPLY_TIMEOUT_MS = 15000;
 const RED = "#D7261F";
 
 async function settings() {

@@ -64,7 +64,10 @@ final class Aria2: @unchecked Sendable {
             "--input-file=\(session.path)",
             "--save-session=\(session.path)",
             "--save-session-interval=15",
-            "--continue=true",
+            // Resume uses .aria2 control files. Without this, a different file that
+            // happens to share a name in Downloads would be "resumed" (or counted
+            // as done) instead of saved as name.1.ext.
+            "--continue=false",
             "--max-concurrent-downloads=8",
             // "8 ants dragging it home": one normal link, 8 parallel connections
             "--split=8",

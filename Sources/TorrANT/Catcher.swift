@@ -22,12 +22,20 @@ final class Catcher: @unchecked Sendable {
     static var socketPath: String { support.appendingPathComponent("catch.sock").path }
     static var extensionFolder: URL { support.appendingPathComponent("BraveExtension", isDirectory: true) }
 
-    private static var braveHosts: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BraveSoftware/Brave-Browser/NativeMessagingHosts", isDirectory: true)
+    /// Where Brave looks for helpers. Brave on macOS reads Chrome's folder
+    /// (its own folder alone gives "native messaging host not found"), so we
+    /// register in both, but only when Brave is installed.
+    private static var hostFolders: [URL] {
+        let lib = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        guard FileManager.default.fileExists(atPath: lib.appendingPathComponent("BraveSoftware/Brave-Browser").path)
+        else { return [] }
+        return ["BraveSoftware/Brave-Browser/NativeMessagingHosts", "Google/Chrome/NativeMessagingHosts"]
+            .map { lib.appendingPathComponent($0, isDirectory: true) }
     }
 
     func start() {
+        // A hung-up helper must never take the app down with it.
+        signal(SIGPIPE, SIG_IGN)
         try? FileManager.default.createDirectory(at: Catcher.support, withIntermediateDirectories: true)
         Catcher.installHost()
         Catcher.syncExtension()
@@ -41,8 +49,6 @@ final class Catcher: @unchecked Sendable {
         guard let helper = Bundle.main.executableURL?.deletingLastPathComponent()
             .appendingPathComponent("torrant-catch"),
               FileManager.default.isExecutableFile(atPath: helper.path) else { return }
-        let brave = braveHosts.deletingLastPathComponent()
-        guard FileManager.default.fileExists(atPath: brave.path) else { return }   // Brave not installed
         let manifest: [String: Any] = [
             "name": hostName,
             "description": "TorrANT: takes downloads from Brave",
@@ -51,9 +57,11 @@ final class Catcher: @unchecked Sendable {
             "allowed_origins": ["chrome-extension://\(extensionID)/"],
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else { return }
-        try? FileManager.default.createDirectory(at: braveHosts, withIntermediateDirectories: true)
-        let file = braveHosts.appendingPathComponent("\(hostName).json")
-        if (try? Data(contentsOf: file)) != data { try? data.write(to: file, options: .atomic) }
+        for folder in hostFolders {
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let file = folder.appendingPathComponent("\(hostName).json")
+            if (try? Data(contentsOf: file)) != data { try? data.write(to: file, options: .atomic) }
+        }
     }
 
     /// Copies the bundled extension to a stable folder, only touching files that changed.
@@ -126,6 +134,11 @@ final class Catcher: @unchecked Sendable {
 
     private func serve(_ fd: Int32) {
         defer { close(fd) }
+        // Brave is waiting: wake up even if macOS has napped us in the background.
+        let activity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Download from Brave")
+        defer { ProcessInfo.processInfo.endActivity(activity) }
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         var tv = timeval(tv_sec: 5, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
@@ -145,7 +158,7 @@ final class Catcher: @unchecked Sendable {
             box.value = await Catcher.handle(msg)
             done.signal()
         }
-        if done.wait(timeout: .now() + 7) == .timedOut { box.value = ["ok": false, "reason": "TorrANT was too busy"] }
+        if done.wait(timeout: .now() + 10) == .timedOut { box.value = ["ok": false, "reason": "TorrANT was too busy"] }
 
         guard var out = try? JSONSerialization.data(withJSONObject: box.value) else { return }
         out.append(0x0A)

@@ -249,7 +249,7 @@ final class Colony {
         let shown = name.isEmpty ? (u.lastPathComponent.isEmpty ? (u.host ?? raw) : u.lastPathComponent) : name
         say("Caught \(shown) from Brave")
         if !NSApp.isActive { Notifier.shared.caught(shown) }
-        await refresh()
+        Task { await refresh() }   // answer Brave first
         return nil
     }
 

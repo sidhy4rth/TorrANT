@@ -32,7 +32,9 @@ func askApp(_ message: Data) -> [String: Any]? {
     guard fd >= 0 else { return nil }
     defer { close(fd) }
 
-    var tv = timeval(tv_sec: 7, tv_usec: 0)
+    var on: Int32 = 1
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+    var tv = timeval(tv_sec: 12, tv_usec: 0)
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
@@ -67,6 +69,7 @@ func askApp(_ message: Data) -> [String: Any]? {
     return (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any]
 }
 
+signal(SIGPIPE, SIG_IGN)
 while let header = readExactly(4) {
     let length = header.withUnsafeBytes { Int(UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self))) }
     guard length > 0, length < 4 * 1024 * 1024, let body = readExactly(length) else { break }
