@@ -26,7 +26,8 @@ final class Uploader {
     var jobs: [Job] = []
 
     /// The switch: where new downloads end up.
-    var straightToDrive: Bool = UserDefaults.standard.bool(forKey: "straightToDrive") {
+    /// On unless you've chosen otherwise: keeping the Mac empty is what TorrANT is for.
+    var straightToDrive: Bool = UserDefaults.standard.object(forKey: "straightToDrive") as? Bool ?? true {
         didSet { UserDefaults.standard.set(straightToDrive, forKey: "straightToDrive") }
     }
 

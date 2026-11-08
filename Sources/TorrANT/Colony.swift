@@ -214,6 +214,9 @@ final class Colony {
         }
         if Uploader.shared.straightToDrive, !item.path.lowercased().hasSuffix(".torrent") {
             Task { await autoSend(item) }
+        } else if Uploader.shared.ready, !item.path.lowercased().hasSuffix(".torrent") {
+            // Say why it stayed here, so it never looks like the upload just didn't happen.
+            say("\(c.name) stayed on this Mac: the switch is on Save to this Mac. Flip it to Straight to Drive to send things up on their own")
         }
     }
 
