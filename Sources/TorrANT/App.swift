@@ -258,7 +258,7 @@ struct SettingsView: View {
                     get: { keepAwake }, set: { keepAwake = $0; Awake.shared.enabled = $0 }))
                     .toggleStyle(.checkbox)
                     .font(Theme.body(14))
-                Text("The screen can still turn off. Closing a MacBook's lid still pauses downloads unless it's plugged into a monitor.")
+                Text("Covers downloads and Google Drive uploads. The screen can still turn off. Closing a MacBook's lid still pauses everything unless it's plugged into a monitor.")
                     .font(Theme.body(12)).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 20)

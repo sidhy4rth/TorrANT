@@ -1,8 +1,8 @@
 import Foundation
 import IOKit.pwr_mgt
 
-/// Keeps the Mac from idle-sleeping while ants are working (downloading or
-/// queued). The screen can still turn off, and closing the lid still sleeps
+/// Keeps the Mac from idle-sleeping while ants are working (downloading,
+/// queued, unpacking, or Google Drive still uploading). The screen can still turn off, and closing the lid still sleeps
 /// a MacBook unless it's in clamshell mode. Seeding alone doesn't count.
 @MainActor
 final class Awake {
@@ -26,7 +26,7 @@ final class Awake {
             let ok = IOPMAssertionCreateWithName(
                 kIOPMAssertPreventUserIdleSystemSleep as CFString,
                 IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                "TorrANT is downloading" as CFString,
+                "TorrANT is downloading or uploading" as CFString,
                 &assertion)
             holding = ok == kIOReturnSuccess
             return holding

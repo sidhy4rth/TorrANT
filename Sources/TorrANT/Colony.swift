@@ -90,6 +90,7 @@ final class Colony {
         }
         Task { await pollForever() }
         Task { await watchClipboardForever() }
+        Task { await watchDriveForever() }
     }
 
     func shutdown() {
@@ -193,6 +194,7 @@ final class Colony {
         if ants != antsOut { antsOut = ants }
 
         let working = sorted.contains { $0.state == .active || $0.state == .waiting }
+            || driveBusy || !carrying.isEmpty || !unpacking.isEmpty
         if Awake.shared.update(working: working) {
             say(Awake.shared.holding ? "Keeping the Mac awake while the ants work" : "All quiet. The Mac can sleep again")
         }
@@ -498,6 +500,34 @@ final class Colony {
         try? await aria.call("aria2.removeDownloadResult", [c.gid])
         forgetSwarm(gid: c.gid)
         await refresh()
+    }
+
+    /// True while something in the Drive folder hasn't finished uploading.
+    /// Checked every few seconds, so keep-awake covers Drive uploads too.
+    @ObservationIgnored private var driveBusy = false
+
+    private func watchDriveForever() async {
+        while true {
+            if let dir = driveDir {
+                driveBusy = await Task.detached(priority: .utility) { Colony.anythingUploading(dir) }.value
+            } else {
+                driveBusy = false
+            }
+            try? await Task.sleep(for: .seconds(5))
+        }
+    }
+
+    nonisolated static func anythingUploading(_ dir: URL) -> Bool {
+        let keys: [URLResourceKey] = [.isDirectoryKey, .ubiquitousItemIsUploadedKey]
+        guard let e = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return false }
+        var seen = 0
+        for case let u as URL in e {
+            seen += 1
+            if seen > 5000 { break }
+            guard let v = try? u.resourceValues(forKeys: Set(keys)), v.isDirectory != true else { continue }
+            if v.ubiquitousItemIsUploaded == false { return true }
+        }
+        return false
     }
 
     // MARK: Unpacking .zip downloads
