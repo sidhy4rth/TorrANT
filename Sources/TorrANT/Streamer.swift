@@ -27,7 +27,7 @@ final class Streamer {
             .appendingPathComponent("TorrANT", isDirectory: true)
     }
     private var config: URL { support.appendingPathComponent("rclone.conf") }
-    /// Parts of videos already fetched (max 20 GB, cleared after a day). Caches, so macOS may clear it too.
+    /// Preloaded starts and what's playing now (max 1 GB, cleared after a day). In Caches, so macOS may clear it too.
     private var streamCache: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("TorrANT/stream", isDirectory: true)
@@ -103,8 +103,7 @@ final class Streamer {
 
     /// Starts the server, looks up the Drive folder, and pre-loads the first and last 4 MB of
     /// every video (where a video's header and seek index live), like YouTube preloading the
-    /// start. Tested 8 Nov: start 3.5–4 s → 2.2 s. Kept a week in the cache, so it's ~8 MB
-    /// per video per week. Runs at launch and whenever the Drive page opens.
+    /// start. Tested 8 Nov: start 3.5–4 s → 2.2 s. Lives in the 1 GB cache for up to a day. Runs at launch and whenever the Drive page opens.
     func warmUp() {
         guard state == .ready, !warming else { return }
         warming = true
@@ -239,7 +238,11 @@ final class Streamer {
                            // long read-ahead itself.
                            "--vfs-cache-mode", "full", "--cache-dir", streamCache.path,
                            "--vfs-read-ahead", "48M",
-                           "--vfs-cache-max-size", "20G", "--vfs-cache-max-age", "168h",
+                           // Space matters more than keeping watched parts: a hard 1 GB cap
+                           // (checked every 30 s), oldest out first. It mostly holds the
+                           // preloaded starts; what you watch is pushed out as you go.
+                           "--vfs-cache-max-size", "1G", "--vfs-cache-max-age", "24h",
+                           "--vfs-cache-poll-interval", "30s",
                            // Own Google key, so rclone may ask Google faster than its shared-key default.
                            "--drive-pacer-min-sleep", "10ms", "--drive-pacer-burst", "200",
                            "--vfs-fast-fingerprint",
