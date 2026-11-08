@@ -151,7 +151,10 @@ final class DriveWatcher {
             if e.files.isEmpty { it.uploaded = true }
             return it
         }
-        .sorted { $0.uploaded == $1.uploaded ? $0.date > $1.date : !$0.uploaded }
+        // Still-uploading first, then A to Z, so rows never jump around.
+        .sorted { $0.uploaded == $1.uploaded
+            ? $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            : !$0.uploaded }
 
         // Speed per item over the last few seconds. Only counts readings from a progress
         // feed we were already watching: a fresh feed starts mid-way and isn't speed.
@@ -344,7 +347,9 @@ struct DriveView: View {
                 .foregroundStyle(Theme.red)
             Text("Google Drive").font(Theme.display(24))
             Text("Winged ants fly your files up.").font(Theme.body(14)).foregroundStyle(Theme.muted)
+                .lineLimit(1).layoutPriority(-1)
             Spacer()
+            StreamChip()
             if let a = watcher.account {
                 HStack(spacing: 8) {
                     Circle().fill(Theme.safe).frame(width: 8, height: 8)
@@ -507,9 +512,25 @@ struct DriveView: View {
 struct DriveRow: View {
     let item: DriveItem
     @State private var hover = false
+    @State private var expanded = false
     private var watcher: DriveWatcher { DriveWatcher.shared }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            mainRow
+            if expanded && item.isFolder { EpisodeList(folder: item.url) }
+        }
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(hover ? Theme.surface2 : Theme.surface))
+    }
+
+    private func play() {
+        Task {
+            if item.isFolder { await Streamer.shared.playSeason(item.url) }
+            else { await Streamer.shared.play(item.url) }
+        }
+    }
+
+    private var mainRow: some View {
         HStack(spacing: 14) {
             Image(systemName: item.isFolder ? "folder.fill" : "film")
                 .font(.system(size: 16, weight: .semibold))
@@ -551,12 +572,11 @@ struct DriveRow: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(hover ? Theme.surface2 : Theme.surface))
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
+        .onTapGesture(count: 2) { play() }
         .help(item.problem == "paused" ? "Google Drive can't upload right now. Syncing is paused or there's no internet."
-              : item.problem ?? "Double-click to play")
+              : item.problem ?? (item.isFolder ? "Double-click to play the season in VLC" : "Double-click to play in VLC"))
         .contextMenu { menu }
     }
 
@@ -588,7 +608,12 @@ struct DriveRow: View {
 
     private var controls: some View {
         HStack(spacing: 6) {
-            iconButton("play.fill", "Play") { NSWorkspace.shared.open(item.url) }
+            if item.isFolder {
+                iconButton(expanded ? "chevron.up" : "list.bullet", expanded ? "Hide episodes" : "Show episodes") {
+                    withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
+                }
+            }
+            iconButton("play.fill", item.isFolder ? "Play the season in VLC (streams)" : "Play in VLC (streams)") { play() }
             if item.uploaded && !item.cloudOnly {
                 iconButton("externaldrive.badge.minus", "Free up space on this Mac") { Task { await watcher.freeUp([item]) } }
             } else if item.cloudOnly {
@@ -613,7 +638,7 @@ struct DriveRow: View {
     }
 
     @ViewBuilder private var menu: some View {
-        Button("Play") { NSWorkspace.shared.open(item.url) }
+        Button(item.isFolder ? "Play the season" : "Play") { play() }
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
         Divider()
         if item.uploaded && !item.cloudOnly {
@@ -621,6 +646,73 @@ struct DriveRow: View {
         }
         if !item.fullyOnMac {
             Button("Download to this Mac for offline") { Task { await watcher.download(item) } }
+        }
+    }
+}
+
+/// Episodes inside a season folder, each one playable on its own.
+private struct EpisodeList: View {
+    let folder: URL
+    @State private var eps: [URL] = []
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(eps, id: \.self) { e in EpisodeRow(file: e, folder: folder) }
+            if eps.isEmpty {
+                Text("No videos in this folder").font(Theme.body(13)).foregroundStyle(Theme.muted).padding(.vertical, 6)
+            }
+        }
+        .padding(.leading, 70)
+        .padding(.trailing, 16)
+        .padding(.bottom, 12)
+        .task { eps = await Task.detached { Streamer.episodes(in: folder) }.value }
+    }
+}
+
+private struct EpisodeRow: View {
+    let file: URL
+    let folder: URL
+    @State private var hover = false
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "play.fill").font(.system(size: 10, weight: .bold))
+                .foregroundStyle(hover ? Theme.red : Theme.muted)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Theme.surface2))
+            Text(file.deletingPathExtension().lastPathComponent)
+                .font(Theme.body(13, hover ? .semibold : .regular))
+                .lineLimit(1).truncationMode(.middle)
+            Spacer()
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 10).fill(hover ? Theme.line : .clear))
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .onTapGesture { Task { await Streamer.shared.playSeason(folder, from: file) } }
+        .help("Play from this episode (streams)")
+    }
+}
+
+/// Shows whether ▶ streams, and sets it up when it doesn't.
+private struct StreamChip: View {
+    @State private var streamer = Streamer.shared
+    var body: some View {
+        switch streamer.state {
+        case .ready:
+            HStack(spacing: 6) {
+                Image(systemName: "dot.radiowaves.left.and.right").font(.system(size: 12, weight: .semibold))
+                Text("Streaming on").font(Theme.body(13, .semibold))
+            }
+            .foregroundStyle(Theme.safe)
+            .help("▶ plays straight from Drive and only fetches the part you watch")
+        case .signingIn:
+            Text("Finish the Google sign-in in your browser…").font(Theme.body(13)).foregroundStyle(Theme.muted)
+        case .notSetUp:
+            Button("Set up streaming") { streamer.connect() }.buttonStyle(GhostButtonStyle(tint: Theme.red))
+                .help("One-time, read-only Google sign-in so ▶ streams instead of downloading the whole file")
+        case .problem(let why):
+            Button("Retry streaming setup") { streamer.connect() }.buttonStyle(GhostButtonStyle(tint: Theme.red))
+                .help(why)
         }
     }
 }

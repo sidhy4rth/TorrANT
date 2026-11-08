@@ -68,7 +68,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         Catcher.shared.stop()
-        MainActor.assumeIsolated { Colony.shared.shutdown() }
+        MainActor.assumeIsolated {
+            Streamer.shared.stop()
+            Colony.shared.shutdown()
+        }
     }
 }
 
