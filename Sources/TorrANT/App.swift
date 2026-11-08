@@ -41,8 +41,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.setup()
         MainActor.assumeIsolated {
+            NetWatch.shared.start()
             Colony.shared.boot()
-            Streamer.shared.warmUp()   // stream server + preload ready before the first ▶
+            // Give macOS a moment to say whether this is a hotspot before preloading anything.
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                Streamer.shared.warmUp()   // stream server + preload ready before the first ▶
+            }
             NightShift.shared.begin()
         }
         Catcher.shared.start()

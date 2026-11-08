@@ -13,11 +13,13 @@
 ![BitTorrent](https://img.shields.io/badge/BitTorrent-DHT_·_PEX_·_magnets-E5322D)
 ![Brave](https://img.shields.io/badge/Brave-catches_every_download-FB542B?logo=brave&logoColor=white)
 ![Google Drive](https://img.shields.io/badge/Google_Drive-uploads_·_streams-1FA463?logo=googledrive&logoColor=white)
-![Status](https://img.shields.io/badge/status-v0.2_·_private-5A5551)
+![Status](https://img.shields.io/badge/status-v0.3_·_private-5A5551)
 
 [**What it does**](#what-it-does) ·
 [**Brave hand-off**](#catching-every-brave-download) ·
 [**Google Drive**](#sending-things-to-google-drive) ·
+[**Library & streaming**](#library-and-streaming) ·
+[**Night shift**](#link-grabber-and-night-shift) ·
 [**Design notes**](docs/adr/README.md) ·
 [**Security**](SECURITY.md)
 
@@ -68,6 +70,11 @@ bone means a crumb, and every label says what it means in plain words.
 | **Spots crumbs on the clipboard** | Copy a download link or a magnet anywhere and a *Crumb spotted!* banner offers to grab it. |
 | **Sends things to Google Drive** | A cloud button on every finished download moves it into Google Drive, after asking and saying how much data the upload will use. A Google Drive page shows each upload live. [How it works ↓](#sending-things-to-google-drive) |
 | **Unpacks zipped seasons** | A season that arrives as one `.zip` can't stream from Drive, so TorrANT unpacks it into a folder of episodes first, checks every byte came out, and bins the zip. Also on its own from the Anthill's right-click menu. |
+| **Streams from Drive like YouTube** | ▶ plays straight from Google Drive in VLC without downloading the file: starts in about 2 s, skips in about 3 s, picks up where you stopped. [How ↓](#library-and-streaming) |
+| **Has a Library** | Posters and clean titles for everything in Drive, seasons with their episodes, and a *Continue watching* row. |
+| **Grabs links in bulk** | Paste a web page and the ants list every video, archive, torrent and magnet on it, with sizes. Download now or leave them for the night shift. [How ↓](#link-grabber-and-night-shift) |
+| **Works the night shift** | Queued downloads run from 1 to 7 AM (your times), pause what's unfinished at the end and carry on the next night. Never starts on a hotspot or a Low Data Mode network. |
+| **Lives in one window** | Downloads, Library, Google Drive, Link Grabber and Settings are sections of one window, switched from the sidebar or with ⌘1–4. |
 | **Keeps the Mac awake** | While anything is downloading, queued, unpacking or still uploading to Drive, the Mac won't idle-sleep. The screen can still turn off. The moment everything is done, it can sleep again. |
 | **Shares back, then stops** | Finished torrents keep feeding other colonies until they've given back as much as they took (1×), then rest. |
 | **Lives in the menu bar too** | *Ant Cam*: a pocket view of what's on the trail, with its own paste box. |
@@ -173,6 +180,41 @@ or offline* instead of showing an error.
 
 ---
 
+## Library and streaming
+
+Google Drive for desktop downloads a whole file before any player can open it. TorrANT doesn't
+wait: ▶ hands VLC a private link on this Mac, served by [rclone](https://rclone.org) with a
+read-only Google sign-in, so VLC fetches only the part being watched.
+
+- **Like YouTube.** VLC buffers a second of video, then reads up to 128 MB ahead and reconnects
+  on its own after a Wi-Fi blip. A skip drops the old buffer and starts fresh at the new spot.
+- **Preloaded starts.** The first and last few MB of every video (its header and seek index) are
+  fetched ahead, so ▶ starts in about 2 s instead of 4–10. Kept in a cache capped at 1 GB and
+  cleared after a day; watched parts aren't kept.
+- **Resume.** TorrANT reads VLC's position every few seconds and starts there next time, a few
+  seconds early. Seasons play as a playlist from the episode you're on.
+- **Library.** Posters come from Wikipedia (films) and TVmaze (shows), both free and without an
+  account. Titles are cleaned from file names: `Moana.2026.1080p…mkv` becomes *Moana (2026)*.
+
+**Why skips aren't instant.** Every jump to a new spot needs one fresh answer from Google Drive,
+which takes about 1.5 s. With rclone's shared sign-in key Google throttled those requests and
+skips froze for up to a minute; TorrANT uses its own private key, so they don't.
+
+---
+
+## Link Grabber and Night shift
+
+Paste download links, magnets, or a web page. Before reading anything as a page, TorrANT asks the
+server what it is, so a big file behind an odd link is never downloaded just to look inside it.
+Tick what you want, then **Download now** or **Add to night shift**.
+
+The night shift sends the queue when its window opens (1:00 to 7:00 AM by default), following the
+*Straight to Drive* switch. When the window closes it pauses anything unfinished; that carries on
+the next night. While a batch is waiting, the Mac is kept from sleeping. It never starts on a
+metered connection: a hotspot macOS flags as expensive, or any network with Low Data Mode on.
+
+---
+
 ## Checked by hand
 
 Everything below was run on a real Mac (macOS 26, Apple Silicon) and looked at, not just compiled.
@@ -193,6 +235,13 @@ Everything below was run on a real Mac (macOS 26, Apple Silicon) and looked at, 
 | Unpack, then Drive | A 6-episode season sent with the cloud button | Unpacked, zip moved to the Trash, all 6 episodes uploaded |
 | Keep-awake for uploads | App restarted while Drive was still uploading | Mac held awake: *"TorrANT is downloading or uploading"* |
 | Drive paused | Syncing paused mid-upload | *Drive paused or offline*, no false error |
+| Streaming start | ▶ on a 1.7 GB movie, scripted VLC | Playing in about 2.2 s with preloaded starts |
+| Skipping | Jumps to 50:00 and back to 15:00 | About 3 s each, never frozen (it froze for up to 68 s on the shared key) |
+| Resume | Played 90 s, closed VLC, pressed ▶ in *Continue watching* | Playing 3.1 s later, at 1:24 |
+| Library | Seven titles in Drive | All seven posters, cleaned titles, episode counts |
+| Link Grabber | Two Blender release pages | 75 and 11 links with names and sizes; 1 MB of data used |
+| Night shift | Short test windows | Sent on time, *Night shift done ✓*, and unfinished downloads paused at the end |
+| Zip link, Straight to Drive | A 3 MB zip of 848 small files | Unpacked on the Mac, uploaded (about 6½ minutes), Mac copy gone |
 
 **Not yet checked by hand:** the clipboard banner, magnet links clicked in a browser, notifications, the
 Ant Cam panel, picking single files from a torrent, drag & drop, and *Free up space* / *Download to this
@@ -219,6 +268,14 @@ Mac* on the Google Drive page. They're built; they haven't been walked through o
   upload state; it can't upload on its own or to any other cloud.
 - **Uploads use your data, and so does streaming.** A movie uploaded to Drive costs its size once to
   upload and again every time it's streamed. On a capped connection, watch first and upload later.
+- **The night shift needs the Mac awake.** It keeps an awake Mac from sleeping, but can't wake
+  one that's asleep or shut, and closing the lid still sleeps it.
+- **Weekly Google sign-in.** The private Google key is in testing mode, so Google asks for the
+  sign-in again about once a week, until the app is published in Google Cloud.
+- **Phone hotspots often look like Wi-Fi.** Turn on Low Data Mode for that network once so the
+  night shift and preloading know to wait.
+- **Tiny files upload slowly.** Google files about two or three new files a second, so an
+  unpacked zip of hundreds of small files takes minutes even when it's only a few MB.
 - **Two display bugs:** the Anthill shows "in 0 sec." for every arrival, and a torrent fetched from a link
   leaves its `.torrent` file listed in the Anthill as if it were a download.
 
@@ -263,7 +320,7 @@ The full design has ten screens; these are the ones still to build.
 | Screen | What it adds |
 |---|---|
 | **Taste Test** | Checks what came home before it's opened: safe or poison |
-| **Step Aside** | Smart bandwidth: slow down when you're on a call, a night shift from 1 to 7 AM, gentle on a hotspot |
+| **Step Aside** | Smart bandwidth: slow down when you're on a call (the night shift and hotspot pause are done) |
 | **Colony Report** | A weekly report of what the ants carried, with badges |
 | **Extra Crews** | Mirrors: pull one file from several places at once |
 | **Already in the Anthill** | Spots a download you already have before fetching it again |

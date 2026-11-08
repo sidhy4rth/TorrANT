@@ -162,6 +162,7 @@ final class NightShift {
     var pausedForDay = false     // paused leftovers at the end of the window
 
     @ObservationIgnored private var looping = false
+    @ObservationIgnored private var heldForWiFi = false
 
     private var file: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -232,6 +233,15 @@ final class NightShift {
         let colony = Colony.shared
         if inWindow() {
             guard colony.online else { return }
+            // Never start a batch over a hotspot or Low Data Mode network.
+            if NetWatch.shared.metered {
+                if !waiting.isEmpty || pausedForDay, !heldForWiFi {
+                    heldForWiFi = true
+                    colony.say("Night shift waiting: you're on a hotspot or Low Data Mode")
+                }
+                return
+            }
+            heldForWiFi = false
             if pausedForDay {
                 pausedForDay = false
                 await colony.wakeAll()
@@ -458,6 +468,7 @@ struct GrabberView: View {
 
     private var status: String {
         guard night.on else { return "Off. Queued links wait until you turn it back on." }
+        if NetWatch.shared.metered { return "Waiting for Wi-Fi: on a hotspot or Low Data Mode" }
         let n = night.waiting.count
         let size = night.waitingBytes > 0 ? " · \(Fmt.bytes(night.waitingBytes))" : ""
         if night.inWindow() { return n > 0 ? "Working now · \(n) waiting\(size)" : "Working now · all sent" }

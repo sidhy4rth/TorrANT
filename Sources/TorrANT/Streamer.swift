@@ -156,7 +156,7 @@ final class Streamer {
     /// every video (where a video's header and seek index live), like YouTube preloading the
     /// start. Tested 8 Nov: start 3.5–4 s → 2.2 s. Lives in the 1 GB cache for up to a day. Runs at launch and whenever the Drive page opens.
     func warmUp() {
-        guard state == .ready, !warming else { return }
+        guard state == .ready, !warming, !NetWatch.shared.metered else { return }
         warming = true
         Task {
             defer { warming = false }
