@@ -41,6 +41,8 @@ final class Colony {
         didSet { UserDefaults.standard.set(driveDirPath, forKey: "driveDir") }
     }
     var carrying: [UUID: String] = [:]   // on their way to Google Drive (id -> name)
+    var unpacking: [UUID: String] = [:]  // .zip files being unpacked (id -> name)
+    @ObservationIgnored private var unpackStat: [UUID: (done: Double, total: Double, at: Date, rate: Double)] = [:]
 
     /// Where "Move to Google Drive" puts things: the folder picked in Settings,
     /// or a TorrANT folder in the first Google Drive account on this Mac.
@@ -472,21 +474,177 @@ final class Colony {
 
     /// Moves a finished download into Google Drive, then points the Anthill at its new home.
     func moveToDrive(_ item: HillItem) async {
-        guard carrying[item.id] == nil, !isOnDrive(item) else { return }
+        guard carrying[item.id] == nil, unpacking[item.id] == nil, !isOnDrive(item) else { return }
         guard driveDir != nil else { say(Colony.noDriveNote); return }
-        // A torrent still feeding others has its files open, so stop seeding first.
-        if let c = seeding.first(where: { $0.homePath == item.path }) {
-            try? await aria.call("aria2.forceRemove", [c.gid])
-            try? await Task.sleep(for: .milliseconds(400))
-            try? await aria.call("aria2.removeDownloadResult", [c.gid])
-            forgetSwarm(gid: c.gid)
-            await refresh()
+        await stopSeeding(item.path)
+        // A .zip can't be streamed from Drive, so send the episodes instead.
+        var item = item
+        if Colony.isZip(item.path) {
+            guard let unpacked = await unpack(item) else { return }
+            item = unpacked
         }
         if let target = await carry(URL(fileURLWithPath: item.path), name: item.name, id: item.id),
            let i = hill.firstIndex(where: { $0.id == item.id }) {
             hill[i].path = target.path
             saveHill()
         }
+    }
+
+    /// A torrent still feeding others has its files open, so stop seeding first.
+    private func stopSeeding(_ path: String) async {
+        guard let c = seeding.first(where: { $0.homePath == path }) else { return }
+        try? await aria.call("aria2.forceRemove", [c.gid])
+        try? await Task.sleep(for: .milliseconds(400))
+        try? await aria.call("aria2.removeDownloadResult", [c.gid])
+        forgetSwarm(gid: c.gid)
+        await refresh()
+    }
+
+    // MARK: Unpacking .zip downloads
+
+    static func isZip(_ path: String) -> Bool { path.lowercased().hasSuffix(".zip") }
+
+    /// Unpacks a finished .zip into a folder next to it, checks every byte came out,
+    /// then bins the zip and points the Anthill at the folder.
+    @discardableResult
+    func unpack(_ item: HillItem) async -> HillItem? {
+        guard Colony.isZip(item.path), unpacking[item.id] == nil else { return nil }
+        await stopSeeding(item.path)
+        guard let folder = await unpackZip(URL(fileURLWithPath: item.path), id: item.id, name: item.name) else { return nil }
+        var updated = item
+        updated.path = folder.path
+        updated.name = folder.lastPathComponent
+        if let i = hill.firstIndex(where: { $0.id == item.id }) {
+            hill[i] = updated
+            saveHill()
+        }
+        return updated
+    }
+
+    func liveUnpack(_ id: UUID, _ now: Date) -> Double {
+        guard let u = unpackStat[id], u.total > 0 else { return 0 }
+        let guess = u.done + u.rate * min(0.6, max(0, now.timeIntervalSince(u.at)))
+        return ForwardOnly.shared.step("unpack:\(id)", toward: guess, atLeast: u.done, atMost: u.total) / u.total
+    }
+
+    private func unpackZip(_ zip: URL, id: UUID, name: String) async -> URL? {
+        guard FileManager.default.fileExists(atPath: zip.path) else {
+            say("Can't find \(name) any more")
+            return nil
+        }
+        let parent = zip.deletingLastPathComponent()
+        let base = zip.deletingPathExtension().lastPathComponent
+        let temp = parent.appendingPathComponent(".\(base).unpacking", isDirectory: true)
+        let total = await Task.detached { Colony.zipTotal(zip) }.value
+        guard total > 0 else {
+            say("\(name) doesn't look like a zip TorrANT can open")
+            return nil
+        }
+
+        unpacking[id] = name
+        unpackStat[id] = (0, Double(total), Date(), 0)
+        ForwardOnly.shared.set("unpack:\(id)", 0)
+        say("Unpacking \(name)…")
+
+        // Watch the folder fill up so the bar moves while it unpacks.
+        let watch = Task { @MainActor [weak self] in
+            var last: (Date, Double)?
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                let done = Double(await Task.detached { Colony.folderBytes(temp) }.value)
+                let now = Date()
+                var rate = self?.unpackStat[id]?.rate ?? 0
+                if let (t, d) = last, now.timeIntervalSince(t) > 0.1 {
+                    rate = rate * 0.6 + max(0, (done - d) / now.timeIntervalSince(t)) * 0.4
+                }
+                last = (now, done)
+                self?.unpackStat[id] = (done, Double(total), now, rate)
+            }
+        }
+
+        let result: Result<URL, Error> = await Task.detached {
+            do { return .success(try Colony.extract(zip, into: temp, base: base, expected: total)) }
+            catch { return .failure(error) }
+        }.value
+        watch.cancel()
+        unpacking[id] = nil
+        unpackStat[id] = nil
+
+        switch result {
+        case .success(let folder):
+            _ = try? await NSWorkspace.shared.recycle([zip])
+            say("Unpacked \(folder.lastPathComponent) ✓ The zip is in the Trash")
+            return folder
+        case .failure(let e):
+            try? FileManager.default.removeItem(at: temp)
+            say("Couldn't unpack \(name): \(e.localizedDescription). The zip is untouched")
+            return nil
+        }
+    }
+
+    /// Bytes the zip holds once unpacked ("6 files, 4064516007 bytes uncompressed, …").
+    nonisolated static func zipTotal(_ zip: URL) -> Int64 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/zipinfo")
+        p.arguments = ["-t", zip.path]
+        let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
+        guard (try? p.run()) != nil else { return 0 }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let text = String(decoding: data, as: UTF8.self)
+        guard let r = text.range(of: #"([0-9]+) bytes uncompressed"#, options: .regularExpression) else { return 0 }
+        return Int64(text[r].split(separator: " ").first ?? "") ?? 0
+    }
+
+    nonisolated static func folderBytes(_ dir: URL) -> Int64 {
+        guard let e = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var n: Int64 = 0
+        for case let u as URL in e { n += Int64((try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
+        return n
+    }
+
+    struct UnpackError: LocalizedError {
+        let errorDescription: String?
+    }
+
+    /// Unzips into a hidden folder, checks the size matches, then gives it its real name.
+    /// A zip that already holds one folder isn't wrapped in a second one.
+    nonisolated static func extract(_ zip: URL, into temp: URL, base: String, expected: Int64) throws -> URL {
+        let fm = FileManager.default
+        try? fm.removeItem(at: temp)
+        try fm.createDirectory(at: temp, withIntermediateDirectories: true)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        p.arguments = ["-x", "-k", zip.path, temp.path]
+        let err = Pipe(); p.standardError = err; p.standardOutput = Pipe()
+        try p.run()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else {
+            let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            throw UnpackError(errorDescription: msg.isEmpty ? "unzip failed" : msg.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        try? fm.removeItem(at: temp.appendingPathComponent("__MACOSX"))
+        let got = folderBytes(temp)
+        guard got >= expected else {
+            throw UnpackError(errorDescription: "only \(Fmt.bytes(got)) of \(Fmt.bytes(expected)) came out")
+        }
+
+        let inside = (try? fm.contentsOfDirectory(at: temp, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+        var source = temp
+        var name = base
+        if inside.count == 1, (try? inside[0].resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            source = inside[0]
+            name = inside[0].lastPathComponent
+        }
+        let parent = temp.deletingLastPathComponent()
+        var target = parent.appendingPathComponent(name, isDirectory: true)
+        var n = 2
+        while fm.fileExists(atPath: target.path) {
+            target = parent.appendingPathComponent("\(name) \(n)", isDirectory: true); n += 1
+        }
+        try fm.moveItem(at: source, to: target)
+        if source != temp { try? fm.removeItem(at: temp) }
+        return target
     }
 
     /// Files picked or dropped on the Google Drive page.
@@ -497,6 +655,11 @@ final class Colony {
                 await moveToDrive(item)
             } else if trail.contains(where: { $0.homePath == path }) {
                 say("\(u.lastPathComponent) is still downloading. Send it once it's home")
+            } else if Colony.isZip(path) {
+                let id = UUID()
+                if let folder = await unpackZip(u, id: id, name: u.lastPathComponent) {
+                    _ = await carry(folder, name: folder.lastPathComponent, id: id)
+                }
             } else {
                 _ = await carry(u, name: u.lastPathComponent, id: UUID())
             }

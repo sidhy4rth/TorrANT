@@ -368,7 +368,7 @@ struct DriveView: View {
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Drop movies, shows or any files here").font(Theme.display(17))
-                Text("They're moved into Google Drive, not copied, so they stop filling up this Mac.")
+                Text("They're moved into Google Drive, not copied. Zips are unpacked first so episodes stream.")
                     .font(Theme.body(14)).foregroundStyle(Theme.muted)
             }
             Spacer()
@@ -434,7 +434,8 @@ struct DriveView: View {
 
     @ViewBuilder private var list: some View {
         let moving = colony.carrying.sorted { $0.value < $1.value }
-        if watcher.items.isEmpty && moving.isEmpty {
+        let unpacking = colony.unpacking.sorted { $0.value < $1.value }
+        if watcher.items.isEmpty && moving.isEmpty && unpacking.isEmpty {
             VStack(spacing: 14) {
                 AntSketch(pose: .rest).frame(width: 260)
                 Text(watcher.scanned ? "Nothing up here yet." : "Looking in your Drive…").font(Theme.display(24))
@@ -445,6 +446,7 @@ struct DriveView: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 10) {
+                    ForEach(unpacking, id: \.key) { u in UnpackRow(id: u.key, name: u.value) }
                     ForEach(moving, id: \.key) { m in MovingRow(name: m.value) }
                     ForEach(watcher.items) { it in DriveRow(item: it) }
                 }
@@ -633,6 +635,37 @@ private struct MovingRow: View {
                 Text("Moving into Google Drive…").font(Theme.body(13)).foregroundStyle(Theme.muted)
             }
             Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.surface))
+    }
+}
+
+/// A .zip being opened up before it goes to Drive.
+private struct UnpackRow: View {
+    let id: UUID
+    let name: String
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "archivebox").font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.red)
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(Theme.surface2))
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 10) {
+                    Text(name).font(Theme.body(15, .semibold)).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    LiveLabel(live: true, font: LiveFont.body(13, 600), color: Theme.red, align: .right) { now in
+                        String(format: "%.1f%%", Colony.shared.liveUnpack(id, now) * 100)
+                    }
+                    .frame(width: 70, height: 18)
+                }
+                LiveBarLayer(live: true, color: Theme.red, ant: Theme.chalk) { Colony.shared.liveUnpack(id, $0) }
+                    .frame(height: 18)
+                Text("Unpacking so each episode can stream on its own…")
+                    .font(Theme.body(13)).foregroundStyle(Theme.muted)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

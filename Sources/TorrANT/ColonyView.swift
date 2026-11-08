@@ -413,11 +413,16 @@ struct HillRow: View {
             Button("Move to Google Drive") { Task { await Colony.shared.moveToDrive(item) } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This uploads \(Fmt.bytes(item.size)) using your internet data.")
+            Text(Colony.isZip(item.path)
+                 ? "TorrANT unpacks it first so each episode streams on its own, and puts the zip in the Trash. This uploads \(Fmt.bytes(item.size)) using your internet data."
+                 : "This uploads \(Fmt.bytes(item.size)) using your internet data.")
         }
         .contextMenu {
             Button("Open") { Colony.shared.open(item) }
             Button("Show in Finder") { Colony.shared.reveal(item.path) }
+            if Colony.isZip(item.path) && Colony.shared.unpacking[item.id] == nil {
+                Button("Unpack (zip goes to Trash)") { Task { await Colony.shared.unpack(item) } }
+            }
             if !Colony.shared.isOnDrive(item) && Colony.shared.carrying[item.id] == nil {
                 Button("Move to Google Drive…") { confirmDrive = true }
             }
@@ -428,7 +433,12 @@ struct HillRow: View {
 
     @ViewBuilder private var driveBadge: some View {
         let colony = Colony.shared
-        if colony.carrying[item.id] != nil {
+        if colony.unpacking[item.id] != nil {
+            LiveLabel(live: true, font: LiveFont.body(12, 600), color: Theme.red, align: .right) { now in
+                String(format: "Unpacking %.0f%%", colony.liveUnpack(item.id, now) * 100)
+            }
+            .frame(width: 110, height: 16)
+        } else if colony.carrying[item.id] != nil {
             ProgressView().controlSize(.small)
                 .help("Moving to Google Drive…")
                 .accessibilityLabel("Moving to Google Drive")
