@@ -279,8 +279,9 @@ Mac* on the Google Drive page. They're built; they haven't been walked through o
 - **Closing a MacBook's lid still sleeps it**, and downloads pause until it wakes. No app can stop
   lid-close sleep; only clamshell mode (power + external display) keeps going. Downloads resume on wake.
 - **Not on the Mac App Store.** Apple doesn't allow torrent clients there, so TorrANT is a direct download.
-- **aria2 comes from Homebrew for now.** Until it's bundled inside the app, TorrANT only runs on a Mac
-  that has it installed.
+- **Apple Silicon only.** The download and Drive engines inside the app (aria2 with its libraries,
+  and rclone) are built for Apple Silicon. They're bundled, so no Homebrew is needed.
+- **VLC does the playing.** Streaming and the Library open videos in VLC, which isn't bundled.
 - **Ad-hoc signed.** No Developer ID yet, so macOS asks before the first launch on another Mac.
 - **Brave, not every browser.** The extension is Chromium-based and the helper is registered for Brave
   only. Chrome would work with one more registration; Safari would need its own extension.
@@ -352,5 +353,5 @@ The full design has ten screens; these are the ones still to build.
 | **Foraging Routes** | RSS feeds, GitHub releases and a watch folder that send ants out on their own |
 | **Storage Chambers** | Sorts arrivals into folders by kind |
 
-Also next: aria2 bundled inside the app, a Developer ID signature, Chrome support, and pausing the ant's
-idle animation when the window isn't in front.
+Also next: a Developer ID signature, Chrome support, and pausing the ant's idle animation when the
+window isn't in front.
