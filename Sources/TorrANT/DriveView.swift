@@ -395,11 +395,17 @@ struct DriveView: View {
             Card {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Flying up").font(Theme.body(14)).foregroundStyle(Theme.muted)
-                    OdometerLayer(live: watcher.moving, size: 38, color: Theme.red) { Fmt.odoSpeed(watcher.liveSpeed($0)) }
+                    OdometerLayer(live: watcher.moving || !Uploader.shared.jobs.isEmpty, size: 38, color: Theme.red) {
+                        Fmt.odoSpeed(watcher.liveSpeed($0) + Uploader.shared.liveSpeed($0))
+                    }
                         .frame(height: 46)
-                    LiveLabel(live: watcher.moving, font: LiveFont.body(13), color: Theme.muted) { now in
-                        let left = Double(watcher.totalSize) - watcher.liveTotalSent(now)
-                        return left > 1 ? "\(Fmt.liveSize(left)) to go · \(Fmt.clock(watcher.liveEta(now))) left" : "Nothing waiting"
+                    LiveLabel(live: watcher.moving || !Uploader.shared.jobs.isEmpty, font: LiveFont.body(13), color: Theme.muted) { now in
+                        let up = Uploader.shared
+                        let upLeft = up.jobs.reduce(0.0) { $0 + max(0, $1.size - up.liveDone($1, now)) }
+                        let left = Double(watcher.totalSize) - watcher.liveTotalSent(now) + upLeft
+                        let speed = watcher.liveSpeed(now) + up.liveSpeed(now)
+                        let eta: TimeInterval? = speed > 20_000 && left > 0 ? left / speed : nil
+                        return left > 1 ? "\(Fmt.liveSize(left)) to go · \(Fmt.clock(eta)) left" : "Nothing waiting"
                     }
                     .frame(height: 36)
                 }
@@ -440,7 +446,8 @@ struct DriveView: View {
     @ViewBuilder private var list: some View {
         let moving = colony.carrying.sorted { $0.value < $1.value }
         let unpacking = colony.unpacking.sorted { $0.value < $1.value }
-        if watcher.items.isEmpty && moving.isEmpty && unpacking.isEmpty {
+        let uploads = Uploader.shared.jobs
+        if watcher.items.isEmpty && moving.isEmpty && unpacking.isEmpty && uploads.isEmpty {
             VStack(spacing: 14) {
                 AntSketch(pose: .rest).frame(width: 260)
                 Text(watcher.scanned ? "Nothing up here yet." : "Looking in your Drive…").font(Theme.display(24))
@@ -451,6 +458,7 @@ struct DriveView: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 10) {
+                    ForEach(uploads) { j in UploadRow(job: j) }
                     ForEach(unpacking, id: \.key) { u in UnpackRow(id: u.key, name: u.value) }
                     ForEach(moving, id: \.key) { m in MovingRow(name: m.value) }
                     ForEach(watcher.items) { it in DriveRow(item: it) }
@@ -727,6 +735,42 @@ private struct MovingRow: View {
                 Text("Moving into Google Drive…").font(Theme.body(13)).foregroundStyle(Theme.muted)
             }
             Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Theme.surface))
+    }
+}
+
+/// An rclone upload: a link going straight to Drive, or a finished download flying up.
+private struct UploadRow: View {
+    let job: Uploader.Job
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: job.straight ? "arrow.up.forward.app" : "icloud.and.arrow.up")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.red)
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(Theme.surface2))
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 10) {
+                    Text(job.name).font(Theme.body(15, .semibold)).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    LiveLabel(live: true, font: LiveFont.body(13, 600), color: Theme.red, align: .right) { now in
+                        job.size > 0 ? String(format: "%.1f%%", Uploader.shared.liveFraction(job, now) * 100) : "Starting…"
+                    }
+                    .frame(width: 80, height: 18)
+                }
+                LiveBarLayer(live: true, color: Theme.red, ant: Theme.chalk) { Uploader.shared.liveFraction(job, $0) }
+                    .frame(height: 18)
+                LiveLabel(live: true, font: LiveFont.body(13), color: Theme.muted) { now in
+                    let done = Uploader.shared.liveDone(job, now)
+                    let size = job.size > 0 ? " of \(Fmt.bytes(Int64(job.size)))" : ""
+                    let how = job.straight ? "Straight to Drive, nothing on this Mac" : "Mac copy is deleted once it's up"
+                    return "\(Fmt.liveSize(done))\(size) · \(Fmt.liveSpeed(Uploader.shared.jobs.count == 1 ? Uploader.shared.liveSpeed(now) : job.speed)) · \(how)"
+                }
+                .frame(height: 18)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

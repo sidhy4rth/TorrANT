@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         Catcher.shared.stop()
         MainActor.assumeIsolated {
+            Uploader.shared.stop()
             Streamer.shared.stop()
             Colony.shared.shutdown()
         }
@@ -234,6 +235,18 @@ struct SettingsView: View {
                         if p.runModal() == .OK, let u = p.url { colony.downloadDir = u }
                     }
                 }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Where downloads go").font(Theme.body(14, .semibold))
+                Picker("", selection: Binding(get: { Uploader.shared.straightToDrive },
+                                              set: { Uploader.shared.straightToDrive = $0 })) {
+                    Text("This Mac").tag(false)
+                    Text("Straight to Google Drive").tag(true)
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 360)
+                Text("Straight to Google Drive: links go directly into Drive and never touch this Mac. Torrents and Brave downloads land here first, then are unpacked, uploaded and deleted on their own.")
+                    .font(Theme.body(12)).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Google Drive folder").font(Theme.body(14, .semibold))

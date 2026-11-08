@@ -48,7 +48,7 @@ final class Colony {
     /// or a TorrANT folder in the first Google Drive account on this Mac.
     var driveDir: URL? {
         if let p = driveDirPath { return URL(fileURLWithPath: p) }
-        return Colony.findDrive()?.appendingPathComponent("TorrANT", isDirectory: true)
+        return Colony.findDrive()?.appendingPathComponent(Uploader.folder, isDirectory: true)
     }
 
     var watchClipboard: Bool {
@@ -194,7 +194,7 @@ final class Colony {
         if ants != antsOut { antsOut = ants }
 
         let working = sorted.contains { $0.state == .active || $0.state == .waiting }
-            || driveBusy || !carrying.isEmpty || !unpacking.isEmpty
+            || driveBusy || !carrying.isEmpty || !unpacking.isEmpty || !Uploader.shared.jobs.isEmpty
         if Awake.shared.update(working: working) {
             say(Awake.shared.holding ? "Keeping the Mac awake while the ants work" : "All quiet. The Mac can sleep again")
         }
@@ -208,6 +208,29 @@ final class Colony {
         saveHill()
         say("\(c.name) is home ✓")
         Notifier.shared.home(item)
+        if Uploader.shared.straightToDrive, !item.path.lowercased().hasSuffix(".torrent") {
+            Task { await autoSend(item) }
+        }
+    }
+
+    /// Hands-free: stop sharing, unpack a zip, upload, delete the Mac copy.
+    func autoSend(_ item: HillItem) async {
+        guard Uploader.shared.ready else {
+            say("\(item.name) is on this Mac. Sign in to Google on the Drive page to send it up")
+            return
+        }
+        await stopSeeding(item.path)
+        var item = item
+        if Colony.isZip(item.path) {
+            guard let unpacked = await unpack(item) else { return }
+            item = unpacked
+        }
+        let local = URL(fileURLWithPath: item.path)
+        guard await Uploader.shared.sendFile(local) else { return }
+        if let i = hill.firstIndex(where: { $0.id == item.id }), let dir = driveDir {
+            hill[i].path = dir.appendingPathComponent(local.lastPathComponent).path
+            saveHill()
+        }
     }
 
     // MARK: Actions
@@ -229,6 +252,11 @@ final class Colony {
                 await openTorrent(u); any = true; continue
             }
             guard Link.isMagnet(line) || Link.isWebLink(line) else { continue }
+            if Uploader.shared.straightToDrive, Link.isWebLink(line),
+               URL(string: line)?.pathExtension.lowercased() != "torrent" {
+                if await Uploader.shared.sendLink(line) { any = true; continue }
+                // Not signed in yet: fall back to the Mac, then hands-free upload.
+            }
             if Link.isWebLink(line), let u = URL(string: line), u.pathExtension.lowercased() == "torrent" {
                 // Remote .torrent: aria2 follows it into a swarm automatically.
             }

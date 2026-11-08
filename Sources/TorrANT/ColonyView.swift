@@ -46,6 +46,7 @@ struct ColonyView: View {
                 Text(colony.online ? "Colony online · \(colony.antsOut) ants out" : (colony.problem ?? "Waking the colony…"))
                     .font(Theme.body(14)).foregroundStyle(Theme.muted)
             }
+            DriveModeSwitch()
             Button { openWindow(id: "drive") } label: {
                 HStack(spacing: 7) {
                     Image(systemName: colony.carrying.isEmpty ? "icloud.and.arrow.up" : "icloud.and.arrow.up.fill")
@@ -460,6 +461,35 @@ struct HillRow: View {
             .help("Move to Google Drive")
             .accessibilityLabel("Move to Google Drive")
         }
+    }
+}
+
+/// The "slider": new downloads go to this Mac, or straight to Google Drive.
+struct DriveModeSwitch: View {
+    @State private var up = Uploader.shared
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: up.straightToDrive ? "icloud.fill" : "laptopcomputer")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(up.straightToDrive ? Theme.safe : Theme.muted)
+                .frame(width: 18)
+            Text(up.straightToDrive ? "Straight to Drive" : "Save to this Mac")
+                .font(Theme.body(13, .semibold))
+                .foregroundStyle(up.straightToDrive ? Theme.safe : Theme.muted)
+                .frame(width: 112, alignment: .leading)
+            Toggle("", isOn: Binding(get: { up.straightToDrive },
+                                     set: { v in withAnimation(.easeOut(duration: 0.18)) { up.straightToDrive = v } }))
+                .toggleStyle(.switch).labelsHidden().controlSize(.small)
+                .tint(Theme.safe)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(up.straightToDrive ? Theme.safe.opacity(0.5) : Theme.line))
+        .help("Where new downloads go. Straight to Drive: links upload directly with nothing on this Mac; torrents upload and delete the Mac copy when they finish.")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Straight to Google Drive")
+        .accessibilityValue(up.straightToDrive ? "On" : "Off")
     }
 }
 
