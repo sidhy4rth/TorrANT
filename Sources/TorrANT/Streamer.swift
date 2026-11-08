@@ -98,15 +98,57 @@ final class Streamer {
         launch([link.absoluteString])
     }
 
-    /// Starts the server and looks up the Drive folder ahead of time, so the first ▶ is quick.
+    @ObservationIgnored private var preloaded: Set<String> = []
+    @ObservationIgnored private var warming = false
+
+    /// Starts the server, looks up the Drive folder, and pre-loads the first and last 4 MB of
+    /// every video (where a video's header and seek index live), like YouTube preloading the
+    /// start. Tested 8 Nov: start 3.5–4 s → 2.2 s. Kept a week in the cache, so it's ~8 MB
+    /// per video per week. Runs at launch and whenever the Drive page opens.
     func warmUp() {
-        guard state == .ready, server == nil || server?.isRunning == false else { return }
+        guard state == .ready, !warming else { return }
+        warming = true
         Task {
-            guard await startServer(), let dir = Colony.shared.driveDir,
-                  let rel = Streamer.pathInDrive(dir.appendingPathComponent("x")) else { return }
-            let folder = rel.split(separator: "/").dropLast().joined(separator: "/")
-            _ = await Streamer.answers(port: port, user: user, pass: pass, path: folder)
+            defer { warming = false }
+            guard await startServer(), let dir = Colony.shared.driveDir else { return }
+            let videos = await Task.detached(priority: .utility) {
+                Streamer.episodes(in: dir).map { u in
+                    (u, Int64((try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0))
+                }
+            }.value
+            let todo = videos.filter { !preloaded.contains($0.0.path) && $0.1 > 16_000_000 && !Streamer.isOnMac($0.0) }
+            let (port, user, pass) = (self.port, self.user, self.pass)
+            await withTaskGroup(of: (String, Bool).self) { group in
+                var running = 0
+                for (file, size) in todo {
+                    guard let rel = Streamer.pathInDrive(file) else { continue }
+                    if running >= 3, let (path, ok) = await group.next() {
+                        if ok { preloaded.insert(path) }
+                        running -= 1
+                    }
+                    group.addTask {
+                        let head = await Streamer.fetch(port: port, user: user, pass: pass, path: rel, range: "bytes=0-4194303")
+                        let tail = await Streamer.fetch(port: port, user: user, pass: pass, path: rel,
+                                                        range: "bytes=\(size - 4_194_304)-\(size - 1)")
+                        return (file.path, head && tail)
+                    }
+                    running += 1
+                }
+                for await (path, ok) in group where ok { preloaded.insert(path) }
+            }
         }
+    }
+
+    nonisolated static func fetch(port: Int, user: String, pass: String, path: String, range: String) async -> Bool {
+        let p = path.split(separator: "/").map {
+            String($0).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#"))) ?? String($0)
+        }.joined(separator: "/")
+        guard let url = URL(string: "http://127.0.0.1:\(port)/\(p)") else { return false }
+        var req = URLRequest(url: url, timeoutInterval: 60)
+        req.setValue("Basic " + Data("\(user):\(pass)".utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")
+        req.setValue(range, forHTTPHeaderField: "Range")
+        guard let (_, resp) = try? await URLSession.shared.data(for: req) else { return false }
+        return (resp as? HTTPURLResponse)?.statusCode == 206
     }
 
     /// Plays every episode in a season folder, in order, as one VLC playlist.
@@ -146,7 +188,10 @@ final class Streamer {
         p.executableURL = vlc.appendingPathComponent("Contents/MacOS/VLC")
         p.arguments = ["--network-caching=1000", "--file-caching=1000",
                        "--prefetch-buffer-size=131072", "--prefetch-read-size=1048576",
-                       "--http-reconnect", "--no-video-title-show"] + items
+                       "--http-reconnect", "--no-video-title-show",
+                       // No extra trips: don't scan the folder for linked .mkv parts,
+                       // don't look up artwork online, don't pre-read the playlist.
+                       "--no-mkv-preload-local-dir", "--no-metadata-network-access", "--no-auto-preparse"] + items
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do {
@@ -194,7 +239,10 @@ final class Streamer {
                            // long read-ahead itself.
                            "--vfs-cache-mode", "full", "--cache-dir", streamCache.path,
                            "--vfs-read-ahead", "48M",
-                           "--vfs-cache-max-size", "20G", "--vfs-cache-max-age", "24h",
+                           "--vfs-cache-max-size", "20G", "--vfs-cache-max-age", "168h",
+                           // Own Google key, so rclone may ask Google faster than its shared-key default.
+                           "--drive-pacer-min-sleep", "10ms", "--drive-pacer-burst", "200",
+                           "--vfs-fast-fingerprint",
                            // Small first read so a jump starts fast, then doubling to big reads.
                            "--vfs-read-chunk-size", "8M", "--vfs-read-chunk-size-limit", "off",
                            "--buffer-size", "16M", "--dir-cache-time", "1h"]

@@ -48,7 +48,10 @@ struct TorrANTApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.setup()
-        MainActor.assumeIsolated { Colony.shared.boot() }
+        MainActor.assumeIsolated {
+            Colony.shared.boot()
+            Streamer.shared.warmUp()   // stream server + preload ready before the first ▶
+        }
         Catcher.shared.start()
     }
 
