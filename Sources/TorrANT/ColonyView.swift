@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 /// Screen 1: The Colony.
 struct ColonyView: View {
     @Bindable private var colony = Colony.shared
+    @Environment(\.openWindow) private var openWindow
     @State private var input = ""
     @State private var dropTargeted = false
 
@@ -45,6 +46,19 @@ struct ColonyView: View {
                 Text(colony.online ? "Colony online · \(colony.antsOut) ants out" : (colony.problem ?? "Waking the colony…"))
                     .font(Theme.body(14)).foregroundStyle(Theme.muted)
             }
+            Button { openWindow(id: "drive") } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: colony.carrying.isEmpty ? "icloud.and.arrow.up" : "icloud.and.arrow.up.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Google Drive").font(Theme.body(14, .semibold))
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
+            }
+            .buttonStyle(.plain)
+            .help("Uploads to Google Drive (⇧⌘D)")
             SettingsLink {
                 Image(systemName: "gearshape").font(.system(size: 14, weight: .semibold))
                     .frame(width: 34, height: 34)
@@ -397,7 +411,7 @@ struct HillRow: View {
         .contextMenu {
             Button("Open") { Colony.shared.open(item) }
             Button("Show in Finder") { Colony.shared.reveal(item.path) }
-            if !Colony.shared.isOnDrive(item) && !Colony.shared.sending.contains(item.id) {
+            if !Colony.shared.isOnDrive(item) && Colony.shared.carrying[item.id] == nil {
                 Button("Move to Google Drive") { Task { await Colony.shared.moveToDrive(item) } }
             }
             Divider()
@@ -407,7 +421,7 @@ struct HillRow: View {
 
     @ViewBuilder private var driveBadge: some View {
         let colony = Colony.shared
-        if colony.sending.contains(item.id) {
+        if colony.carrying[item.id] != nil {
             ProgressView().controlSize(.small)
                 .help("Moving to Google Drive…")
                 .accessibilityLabel("Moving to Google Drive")

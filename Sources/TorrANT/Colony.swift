@@ -40,7 +40,7 @@ final class Colony {
     var driveDirPath: String? = UserDefaults.standard.string(forKey: "driveDir") {
         didSet { UserDefaults.standard.set(driveDirPath, forKey: "driveDir") }
     }
-    var sending: Set<UUID> = []      // hill items on their way to Google Drive
+    var carrying: [UUID: String] = [:]   // on their way to Google Drive (id -> name)
 
     /// Where "Move to Google Drive" puts things: the folder picked in Settings,
     /// or a TorrANT folder in the first Google Drive account on this Mac.
@@ -472,16 +472,8 @@ final class Colony {
 
     /// Moves a finished download into Google Drive, then points the Anthill at its new home.
     func moveToDrive(_ item: HillItem) async {
-        guard !sending.contains(item.id), !isOnDrive(item) else { return }
-        guard let dest = driveDir else {
-            say("Google Drive isn't on this Mac yet. Install Google Drive for desktop, or pick a folder in Settings")
-            return
-        }
-        let src = URL(fileURLWithPath: item.path)
-        guard FileManager.default.fileExists(atPath: src.path) else {
-            say("Can't find \(item.name) any more")
-            return
-        }
+        guard carrying[item.id] == nil, !isOnDrive(item) else { return }
+        guard driveDir != nil else { say(Colony.noDriveNote); return }
         // A torrent still feeding others has its files open, so stop seeding first.
         if let c = seeding.first(where: { $0.homePath == item.path }) {
             try? await aria.call("aria2.forceRemove", [c.gid])
@@ -490,9 +482,45 @@ final class Colony {
             forgetSwarm(gid: c.gid)
             await refresh()
         }
+        if let target = await carry(URL(fileURLWithPath: item.path), name: item.name, id: item.id),
+           let i = hill.firstIndex(where: { $0.id == item.id }) {
+            hill[i].path = target.path
+            saveHill()
+        }
+    }
 
-        sending.insert(item.id)
-        say("Carrying \(item.name) to Google Drive…")
+    /// Files picked or dropped on the Google Drive page.
+    func sendToDrive(_ urls: [URL]) async {
+        for u in urls {
+            let path = u.standardizedFileURL.path
+            if let item = hill.first(where: { $0.path == path }) {
+                await moveToDrive(item)
+            } else if trail.contains(where: { $0.homePath == path }) {
+                say("\(u.lastPathComponent) is still downloading. Send it once it's home")
+            } else {
+                _ = await carry(u, name: u.lastPathComponent, id: UUID())
+            }
+        }
+    }
+
+    static let noDriveNote = "Google Drive isn't on this Mac yet. Install Google Drive for desktop, or pick a folder in Settings"
+
+    /// The actual move, done off the main thread. Renames on a clash instead of overwriting.
+    private func carry(_ src: URL, name: String, id: UUID) async -> URL? {
+        guard let dest = driveDir else { say(Colony.noDriveNote); return nil }
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: src.path) else {
+            say("Can't find \(name) any more")
+            return nil
+        }
+        let s = src.standardizedFileURL.path, d = dest.standardizedFileURL.path
+        if s == d || d.hasPrefix(s + "/") || s.hasPrefix(d + "/") {
+            say("\(name) is already in Google Drive")
+            return nil
+        }
+
+        carrying[id] = name
+        say("Carrying \(name) to Google Drive…")
         let result: Result<URL, Error> = await Task.detached {
             do {
                 let fm = FileManager.default
@@ -513,17 +541,15 @@ final class Colony {
                 return .failure(error)
             }
         }.value
-        sending.remove(item.id)
+        carrying[id] = nil
 
         switch result {
         case .success(let target):
-            if let i = hill.firstIndex(where: { $0.id == item.id }) {
-                hill[i].path = target.path
-                saveHill()
-            }
-            say("\(item.name) is on Google Drive ✓")
+            say("\(name) is in Google Drive ✓ Uploading now")
+            return target
         case .failure(let e):
-            say("Couldn't move \(item.name): \(e.localizedDescription)")
+            say("Couldn't move \(name): \(e.localizedDescription)")
+            return nil
         }
     }
 

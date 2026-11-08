@@ -24,6 +24,14 @@ struct TorrANTApp: App {
         .defaultSize(width: 1280, height: 800)
         .commands { ColonyCommands() }
 
+        Window("Google Drive", id: "drive") {
+            DriveView()
+                .frame(minWidth: 900, minHeight: 600)
+                .preferredColorScheme(.dark)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1080, height: 720)
+
         MenuBarExtra {
             AntCam()
         } label: {
@@ -65,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 struct ColonyCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("Send the Ants to the Clipboard Link") {
@@ -77,6 +86,9 @@ struct ColonyCommands: Commands {
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             Button("Wake All Ants") { Task { await Colony.shared.wakeAll() } }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
+            Divider()
+            Button("Google Drive Uploads") { openWindow(id: "drive") }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
         }
     }
 }
@@ -234,7 +246,7 @@ struct SettingsView: View {
                         if p.runModal() == .OK, let u = p.url { colony.driveDirPath = u.path }
                     }
                 }
-                Text("Hover a finished download and press the cloud to move it there.")
+                Text("Hover a finished download and press the cloud to move it there, or use the Google Drive page.")
                     .font(Theme.body(12)).foregroundStyle(Theme.muted)
             }
             Toggle("Watch the clipboard for crumbs (download links and magnets)", isOn: Binding(
