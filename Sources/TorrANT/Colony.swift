@@ -218,6 +218,41 @@ final class Colony {
         return any
     }
 
+    /// A download caught in Brave by the TorrANT Catcher extension. Carries the
+    /// site's cookies, referrer and user agent so signed-in downloads still work.
+    /// Returns nil on success, or a short reason Brave should keep it.
+    func catchFromBrowser(url raw: String, cookies: String, referrer: String,
+                          userAgent: String, filename: String) async -> String? {
+        guard let u = URL(string: raw), let scheme = u.scheme?.lowercased(),
+              ["http", "https", "ftp"].contains(scheme) else { return "not a web link" }
+        boot()
+        for _ in 0..<30 where !online { try? await Task.sleep(for: .milliseconds(200)) }
+        guard online else { return "the colony isn't awake" }
+
+        // These become HTTP headers, so no line breaks may sneak in.
+        func clean(_ s: String) -> String {
+            s.replacingOccurrences(of: "\r", with: "").replacingOccurrences(of: "\n", with: "")
+        }
+        var opts: [String: Any] = [:]
+        if !cookies.isEmpty { opts["header"] = ["Cookie: \(clean(cookies))"] }
+        if !referrer.isEmpty { opts["referer"] = clean(referrer) }
+        if !userAgent.isEmpty { opts["user-agent"] = clean(userAgent) }
+        let name = (filename as NSString).lastPathComponent
+        if !name.isEmpty, !name.hasPrefix("."), !name.contains("/") { opts["out"] = name }
+
+        do {
+            try await aria.call("aria2.addUri", [[raw], opts])
+        } catch {
+            say("Couldn't take that from Brave: \(error.localizedDescription)")
+            return error.localizedDescription
+        }
+        let shown = name.isEmpty ? (u.lastPathComponent.isEmpty ? (u.host ?? raw) : u.lastPathComponent) : name
+        say("Caught \(shown) from Brave")
+        if !NSApp.isActive { Notifier.shared.caught(shown) }
+        await refresh()
+        return nil
+    }
+
     /// A local .torrent: add it resting, then ask which files to carry.
     func openTorrent(_ url: URL) async {
         do {
@@ -464,6 +499,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchecked Sen
 
     func spotted(_ link: String) {
         post(title: "Crumb spotted!", body: "Your ants found a link lying around. Grab it?", info: ["link": link], category: "crumb")
+    }
+
+    func caught(_ name: String) {
+        post(title: "Caught from Brave", body: "\(name): your ants are carrying it home.", info: [:])
     }
 
     private func post(title: String, body: String, info: [String: String], category: String? = nil) {

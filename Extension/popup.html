@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/48.png" alt="" width="28" height="28">
+    <div>
+      <h1>TorrANT</h1>
+      <p class="tag">No crumb too big.</p>
+    </div>
+  </header>
+
+  <label class="row switch">
+    <span>
+      <strong>Send downloads to the ants</strong>
+      <small id="mode">Every Brave download goes to TorrANT</small>
+    </span>
+    <input type="checkbox" id="enabled">
+    <i aria-hidden="true"></i>
+  </label>
+
+  <div class="row status" id="status">
+    <b class="dot"></b><span id="statusText">Checking on the colony…</span>
+  </div>
+
+  <div class="row stats">
+    <div><em id="caught">0</em><small>caught so far</small></div>
+    <div class="last"><small>Last crumb</small><span id="last">—</span></div>
+  </div>
+
+  <p class="note">Files under 1 MB, files with no known size and private-window downloads stay in Brave.</p>
+  <script src="popup.js"></script>
+</body>
+</html>

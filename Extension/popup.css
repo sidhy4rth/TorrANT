@@ -1,0 +1,34 @@
+@font-face { font-family: "Bricolage"; src: url("fonts/BricolageGrotesque.ttf"); font-weight: 200 800; }
+@font-face { font-family: "Figtree"; src: url("fonts/Figtree.ttf"); font-weight: 300 900; }
+:root {
+  --soil: #0A0A0A; --surface: #141414; --surface2: #1C1C1C; --line: #262626;
+  --text: #F4F1EE; --muted: #A9A39E; --red: #FF4D40; --fill: #D7261F; --safe: #8BD46E; --rest: #5A5551;
+}
+* { box-sizing: border-box; margin: 0; }
+body {
+  width: 320px; padding: 16px; background: var(--soil); color: var(--text);
+  font: 13px/1.4 "Figtree", -apple-system, system-ui, sans-serif;
+}
+header { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+h1 { font: 800 20px/1 "Bricolage", -apple-system, system-ui, sans-serif; letter-spacing: -0.02em; }
+.tag { color: var(--red); font-size: 12px; margin-top: 3px; }
+.row { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 8px; }
+.switch { display: flex; align-items: center; gap: 10px; cursor: pointer; position: relative; }
+.switch > span { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.switch strong { font-weight: 600; font-size: 14px; }
+small { color: var(--muted); font-size: 12px; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch i { width: 40px; height: 24px; border-radius: 12px; background: var(--rest); position: relative; flex: none; transition: background .15s; }
+.switch i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text); transition: transform .15s; }
+.switch input:checked + i { background: var(--fill); }
+.switch input:checked + i::after { transform: translateX(16px); }
+.switch input:focus-visible + i { outline: 2px solid var(--red); outline-offset: 2px; }
+.status { display: flex; align-items: center; gap: 8px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rest); flex: none; }
+.status.up .dot { background: var(--safe); }
+.status.down .dot { background: var(--red); }
+.stats { display: flex; gap: 14px; align-items: center; }
+.stats em { font: 800 26px/1 "Bricolage", -apple-system, system-ui, sans-serif; font-style: normal; display: block; }
+.last { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; border-left: 1px solid var(--line); padding-left: 14px; }
+.last span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note { color: var(--muted); font-size: 11.5px; margin-top: 10px; }

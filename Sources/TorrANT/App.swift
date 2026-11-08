@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.setup()
         MainActor.assumeIsolated { Colony.shared.boot() }
+        Catcher.shared.start()
     }
 
     /// magnet: links and .torrent files opened from Finder / the browser.
@@ -58,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationWillTerminate(_ notification: Notification) {
+        Catcher.shared.stop()
         MainActor.assumeIsolated { Colony.shared.shutdown() }
     }
 }
@@ -231,10 +233,17 @@ struct SettingsView: View {
                 }
                 if !magnetNote.isEmpty { Text(magnetNote).font(Theme.body(13)).foregroundStyle(Theme.muted) }
             }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Catch every Brave download").font(Theme.body(14, .semibold))
+                Text("In Brave, open brave://extensions, turn on Developer mode, click Load unpacked and pick the TorrANT Catcher folder.")
+                    .font(Theme.body(13)).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Show the extension folder") { Catcher.revealExtension() }
+            }
             Spacer()
         }
         .padding(24)
-        .frame(width: 520, height: 300)
+        .frame(width: 520, height: 420)
         .background(Theme.soil)
         .foregroundStyle(Theme.text)
     }

@@ -11,8 +11,15 @@ APP=build/TorrANT.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Fonts"
 cp "$BIN" "$APP/Contents/MacOS/TorrANT"
+cp "$(dirname "$BIN")/TorrANTCatch" "$APP/Contents/MacOS/torrant-catch"
 cp Support/Info.plist "$APP/Contents/Info.plist"
 cp Sources/TorrANT/Resources/Fonts/*.ttf "$APP/Contents/Resources/Fonts/"
+
+# Brave extension (copied to Application Support on launch, loaded unpacked from there).
+EXT="$APP/Contents/Resources/BraveExtension"
+cp -R Extension "$EXT"
+mkdir -p "$EXT/fonts"
+cp Sources/TorrANT/Resources/Fonts/BricolageGrotesque.ttf Sources/TorrANT/Resources/Fonts/Figtree.ttf "$EXT/fonts/"
 
 # App icon, drawn by the app itself from the sketched ant.
 ICON_SRC=build/icon-1024.png

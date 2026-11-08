@@ -9,6 +9,11 @@ let package = Package(
             name: "TorrANT",
             path: "Sources/TorrANT",
             exclude: ["Resources"]
-        )
+        ),
+        // Brave's native-messaging helper, bundled as Contents/MacOS/torrant-catch
+        .executableTarget(
+            name: "TorrANTCatch",
+            path: "Sources/TorrANTCatch"
+        ),
     ]
 )
