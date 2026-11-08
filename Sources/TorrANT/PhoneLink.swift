@@ -140,6 +140,7 @@ final class PhoneLink {
 
     /// Buttons under a "queued" reply point at the items it added (callback data is capped at 64 bytes).
     @ObservationIgnored private var batches: [String: [UUID]] = [:]
+    @ObservationIgnored private var dupeOffers: [String: (grabs: [Grab], now: Bool)] = [:]
 
     // MARK: Messages
 
@@ -200,6 +201,23 @@ final class PhoneLink {
             grabs[i].size = size
             if let name, !name.isEmpty { grabs[i].name = name }
         }
+        // Hold back what you already have; offer it with a button instead of queueing it.
+        var dupes: [Grab] = []
+        for g in grabs {
+            if let have = await LibraryStore.shared.alreadyHave(g.name) { var d = g; d.have = have; dupes.append(d) }
+        }
+        let dupeURLs = Set(dupes.map(\.url))
+        grabs.removeAll { dupeURLs.contains($0.url) }
+        if !dupes.isEmpty {
+            let key = String(UUID().uuidString.prefix(8))
+            dupeOffers[key] = (dupes, now)
+            let lines = dupes.prefix(8).map { "• \($0.have ?? $0.name)" }.joined(separator: "\n")
+            await api(token, "sendMessage", [
+                "chat_id": chatID, "disable_web_page_preview": true,
+                "text": "📚 You already have \(dupes.count == 1 ? "this" : "these \(dupes.count)"):\n\(lines)\n\nSkipped so you don't spend data twice.",
+                "reply_markup": inline([[("⬇️ Get \(dupes.count == 1 ? "it" : "them") anyway", "ga:\(key)")]])])
+            if grabs.isEmpty { return }
+        }
         let total = grabs.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
         let list = grabs.prefix(8).map { "• \($0.name)" + ($0.size.map { " · \(Fmt.bytes($0))" } ?? "") }.joined(separator: "\n")
         let more = grabs.count > 8 ? "\n…and \(grabs.count - 8) more" : ""
@@ -255,6 +273,18 @@ final class PhoneLink {
             ids.forEach { NightShift.shared.remove($0) }
             await answer("❌ Removed")
             if parts[0] == "rb" { await edit(oldText + "\n\n❌ Removed from tonight") } else { await edit(queueText(), queueButtons()) }
+        case "ga":
+            guard let offer = dupeOffers.removeValue(forKey: arg) else { await answer("Already handled"); return }
+            if offer.now && !NetWatch.shared.metered {
+                for g in offer.grabs { await Colony.shared.send(g.url) }
+                await answer("▶️ Downloading anyway")
+                await edit(oldText + "\n\n▶️ Downloading anyway")
+                await startLive(token)
+            } else {
+                NightShift.shared.add(offer.grabs)
+                await answer("🌙 Added to tonight")
+                await edit(oldText + "\n\n🌙 Added to tonight anyway")
+            }
         case "refresh":
             await answer("Updated")
             await edit(dashboard(), busy ? liveButtons : PhoneLink.noButtons)

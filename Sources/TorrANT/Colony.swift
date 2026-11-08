@@ -256,6 +256,9 @@ final class Colony {
                 await openTorrent(u); any = true; continue
             }
             guard Link.isMagnet(line) || Link.isWebLink(line) else { continue }
+            if let have = await LibraryStore.shared.alreadyHave(LinkGrabber.name(of: line)) {
+                say("📚 You already have \(have). Downloading anyway")
+            }
             // Zips stop on the Mac first: Drive can't stream what's inside a zip, so they're
             // downloaded, unpacked, uploaded and deleted (the hands-free path) instead.
             let ext = URL(string: line)?.pathExtension.lowercased() ?? ""

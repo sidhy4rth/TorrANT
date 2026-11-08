@@ -11,6 +11,7 @@ struct Grab: Identifiable, Equatable {
     let kind: Kind
     var size: Int64?
     var picked = true
+    var have: String?            // "Moana (2026), in your Library" when you already have it
 }
 
 enum LinkGrabber {
@@ -432,6 +433,13 @@ struct GrabberView: View {
             }
             for await (id, size, name) in group { apply(id, size, name) }
         }
+        // Already have it? Label it and leave it unticked.
+        for i in found.indices where found[i].have == nil {
+            if let have = await LibraryStore.shared.alreadyHave(found[i].name) {
+                found[i].have = have
+                found[i].picked = false
+            }
+        }
     }
 
     private func apply(_ id: UUID, _ size: Int64?, _ name: String?) {
@@ -521,9 +529,14 @@ private struct GrabRow: View {
                  bg: grab.kind == .torrent || grab.kind == .magnet ? Theme.swarmTint : Theme.crumbTint)
                 .frame(width: 86, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
-                Text(grab.name).font(Theme.body(14, .semibold)).lineLimit(1).truncationMode(.middle)
-                Text(URL(string: grab.url)?.host ?? (grab.kind == .magnet ? "magnet link" : ""))
-                    .font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(grab.name).font(Theme.body(14, .semibold)).lineLimit(1).truncationMode(.middle)
+                    if grab.have != nil {
+                        Pill(text: "IN LIBRARY", fg: Theme.safe, bg: Color(hex: 0x1F3A1C))
+                    }
+                }
+                Text(grab.have.map { "You already have \($0)" } ?? (URL(string: grab.url)?.host ?? (grab.kind == .magnet ? "magnet link" : "")))
+                    .font(Theme.body(12)).foregroundStyle(grab.have != nil ? Theme.safe : Theme.muted).lineLimit(1)
             }
             Spacer()
             Text(grab.size.map { Fmt.bytes($0) } ?? (grab.kind == .magnet ? "" : "…"))

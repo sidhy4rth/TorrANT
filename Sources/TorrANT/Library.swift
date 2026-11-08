@@ -556,3 +556,48 @@ private struct EpisodeLine: View {
         .onTapGesture(perform: play)
     }
 }
+
+// MARK: - "You already have this"
+
+extension LibraryStore {
+    static func norm(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }
+
+    /// What you already have that matches a download's name: the same film (and year), the same
+    /// season, or the same episode, in Drive or still on this Mac. Nil when it's new or isn't a
+    /// film or show name (a name needs a year or a season number to be compared).
+    func alreadyHave(_ name: String) async -> String? {
+        if !scanned { await refresh() }
+        let p = Titles.parse(name)
+        guard p.year != nil || p.season != nil else { return nil }
+        let key = LibraryStore.norm(p.title)
+        guard key.count >= 2 else { return nil }
+
+        for e in entries where LibraryStore.norm(e.parsed) == key || LibraryStore.norm(e.title) == key {
+            if let s = p.season {
+                guard e.isShow, (e.season ?? 1) == s else { continue }
+                if let ep = p.episode {
+                    if e.episodes.contains(where: { Titles.parse($0.lastPathComponent).episode == ep }) {
+                        return "\(e.title) S\(s) E\(ep), in your Library"
+                    }
+                    continue
+                }
+                return "\(e.title) Season \(s), in your Library"
+            } else if !e.isShow, p.year == nil || e.year == nil || p.year == e.year {
+                return e.title + (e.year.map { " (\($0))" } ?? "") + ", in your Library"
+            }
+        }
+        // Finished downloads still on this Mac.
+        for h in Colony.shared.hill where FileManager.default.fileExists(atPath: h.path) {
+            let q = Titles.parse(h.name)
+            guard LibraryStore.norm(q.title) == key else { continue }
+            if p.season != nil {
+                if q.season == p.season && (p.episode == nil || q.episode == nil || q.episode == p.episode) {
+                    return "\(q.title) on this Mac"
+                }
+            } else if q.season == nil, p.year == nil || q.year == nil || p.year == q.year {
+                return "\(q.title) on this Mac"
+            }
+        }
+        return nil
+    }
+}
