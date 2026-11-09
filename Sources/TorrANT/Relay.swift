@@ -290,17 +290,31 @@ final class RelayMotion {
 struct RelayTrack: View {
     let line: RelayLine
     @State private var motion = RelayMotion()
+    /// Keep drawing until this moment after a change, so the glide and hop can finish.
+    @State private var settleUntil = Date.distantPast   // lanes appear already in place
+    @State private var wake = 0
     @Environment(\.accessibilityReduceMotion) private var reduce
 
     var body: some View {
-        // Redraws every frame only while something moves; still lanes cost nothing.
-        let animate = !reduce && (line.busy || !motion.settled(line.target(Date())) || motion.hopping(Date()) || line.leg == .queued)
-        TimelineView(.animation(minimumInterval: nil, paused: !animate)) { tl in
+        // Still lanes cost nothing: no redraws unless bytes move, something just changed,
+        // or (gently, 10 a second) a night ant is snoozing.
+        let _ = wake   // re-checked when the settle timer fires
+        let settling = Date() < settleUntil
+        let moving = line.busy || settling
+        let animate = !reduce && (moving || line.leg == .queued)
+        TimelineView(.animation(minimumInterval: moving ? 1.0 / 60 : 1.0 / 10, paused: !animate)) { tl in
             Canvas { ctx, size in
                 draw(&ctx, size, tl.date)
             }
         }
+        .onChange(of: Int(line.target(Date()) * 200)) { _, _ in settle() }
+        .onChange(of: line.leg) { _, _ in settle() }
         .accessibilityLabel("\(line.title): \(line.detail(Date()))")
+    }
+
+    private func settle() {
+        settleUntil = Date().addingTimeInterval(2.5)
+        Task { try? await Task.sleep(for: .seconds(2.6)); wake += 1 }
     }
 
     private func draw(_ ctx: inout GraphicsContext, _ size: CGSize, _ now: Date) {

@@ -651,8 +651,14 @@ final class Colony {
     }
 
     /// A download that won't fit (with 1 GB to spare) is paused before it fills the Mac.
+    @ObservationIgnored private var freeCache: (bytes: Int64, at: Date) = (Int64.max, .distantPast)
+
     private func checkSpace(_ list: [Crumb]) {
-        let free = freeSpace
+        // Asking macOS for free space is slow (~5% CPU at once a second): only when something is
+        // downloading, and at most every 30 s.
+        guard list.contains(where: { ($0.state == .active || $0.state == .waiting) && $0.total > 0 && !spaceWarned.contains($0.gid) }) else { return }
+        if Date().timeIntervalSince(freeCache.at) > 30 { freeCache = (freeSpace, Date()) }
+        let free = freeCache.bytes
         for c in list where (c.state == .active || c.state == .waiting) && c.total > 0 && !spaceWarned.contains(c.gid) {
             let need = c.total - c.done
             guard need > free - 1_000_000_000 else { continue }
