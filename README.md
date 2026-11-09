@@ -251,6 +251,10 @@ read-only Google sign-in, so VLC fetches only the part being watched.
   media server (DLNA). Smart TVs list it in their media app and VLC on a phone finds it under
   Local network. It streams straight from Drive and is read-only, but anyone on that Wi-Fi can
   browse it, so it's off until you turn it on.
+- **Ratings and synopses.** Every poster carries a score: 🍅 Rotten Tomatoes critics (or IMDb or
+  Metacritic) for films, TVmaze viewers' ★ for shows. Click a poster for a two-sentence synopsis
+  taken from the opening of its plot, so no spoilers, plus your own 1–5 stars. New arrivals reach
+  your phone with their score and synopsis. All from Wikipedia, Wikidata and TVmaze: free, no account.
 - **Library.** Posters come from Wikipedia (films) and TVmaze (shows), both free and without an
   account. Titles are cleaned from file names: `Moana.2026.1080p…mkv` becomes *Moana (2026)*.
 

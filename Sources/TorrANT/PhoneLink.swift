@@ -525,7 +525,11 @@ final class PhoneLink {
                 let store = LibraryStore.shared
                 if let e = store.entries.first(where: { $0.url.lastPathComponent == name }) {
                     let what = e.isShow ? "Season \(e.season ?? 1) · \(e.episodes.count) episodes" : (e.year.map(String.init) ?? "")
-                    let caption = "🍿 \(e.title)\(what.isEmpty ? "" : " · \(what)")\nIn your Library, ready to stream."
+                    let d = TitleInfo.shared.details[e.posterKey]
+                    var caption = "🍿 \(e.title)\(what.isEmpty ? "" : " · \(what)")"
+                    if let s = d?.score { caption += "\n\(s)" + (d?.scoreFrom.map { " (\($0))" } ?? "") }
+                    if let syn = d?.synopsis, !syn.isEmpty { caption += "\n\n" + syn }
+                    caption += "\n\nIn your Library, ready to stream."
                     if let poster = store.posters[e.posterKey], let img = try? Data(contentsOf: poster) {
                         await sendPhoto(token, img, caption: caption)
                     } else {

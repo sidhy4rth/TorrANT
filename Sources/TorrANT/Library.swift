@@ -170,6 +170,7 @@ final class LibraryStore {
     /// ↻ in the Library: look again for titles that had no poster last time.
     func retryMissing() async {
         for (k, v) in tried where v.isEmpty { tried[k] = nil; names[k] = nil; missedAt[k] = nil }
+        TitleInfo.shared.retryMisses()
         await refresh()
     }
 
@@ -180,6 +181,7 @@ final class LibraryStore {
         if found != entries { entries = found }
         scanned = true
         await fetchPosters()
+        await TitleInfo.shared.fetch(entries)
     }
 
     nonisolated static func scan(_ root: URL) -> [LibraryEntry] {
@@ -245,12 +247,12 @@ final class LibraryStore {
 
     nonisolated private static func download(_ url: URL) async -> Data? { await get(url) }
 
-    nonisolated private static func json(_ s: String) async -> Any? {
+    nonisolated static func json(_ s: String) async -> Any? {
         guard let u = URL(string: s), let d = await get(u) else { return nil }
         return try? JSONSerialization.jsonObject(with: d)
     }
 
-    nonisolated private static func q(_ s: String) -> String {
+    nonisolated static func q(_ s: String) -> String {
         s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+="))) ?? s
     }
 
@@ -260,9 +262,20 @@ final class LibraryStore {
             let img = (d["image"] as? [String: Any]).flatMap { ($0["original"] ?? $0["medium"]) as? String }
             if let img, let u = URL(string: img) { return (u, d["name"] as? String) }
         }
-        // Films (and shows TVmaze didn't know): check likely Wikipedia pages and keep the first
-        // that is a film/series from the right year and has a poster. The top search hit alone
-        // was wrong for "Dalloway (2025)": it returned Mrs Dalloway (1997), which has no image.
+        guard let sum = await wikiPage(e, needImage: true),
+              let img = ((sum["thumbnail"] as? [String: Any])?["source"] ?? (sum["originalimage"] as? [String: Any])?["source"]) as? String
+        else { return (nil, nil) }
+        // Keep your title unless Wikipedia's is the same name, just tidier ("Moana (2026 film)" → "Moana").
+        let found = (sum["title"] as? String ?? e.parsed)
+            .replacingOccurrences(of: #"\s*\((\d{4} )?(film|TV series|miniseries)\)$"#, with: "", options: .regularExpression)
+        let name = LibraryStore.norm(found) == LibraryStore.norm(e.parsed) ? found : nil
+        return (URL(string: img), e.isShow ? nil : name)
+    }
+
+    /// The Wikipedia page (its summary) for a film or show: checks likely pages and keeps the
+    /// first that is a film/series from the right year (and has a poster, when asked). The top
+    /// search hit alone was wrong for "Dalloway (2025)": it returned Mrs Dalloway (1997).
+    nonisolated static func wikiPage(_ e: LibraryEntry, needImage: Bool) async -> [String: Any]? {
         let t = e.parsed
         var pages: [String] = e.isShow
             ? ["\(t) (TV series)", "\(t) (\(e.year.map(String.init) ?? "") TV series)", t]
@@ -276,19 +289,15 @@ final class LibraryStore {
         for page in pages where seen.insert(page).inserted {
             guard let sum = await json("https://en.wikipedia.org/api/rest_v1/page/summary/\(q(page.replacingOccurrences(of: " ", with: "_")))") as? [String: Any],
                   (sum["type"] as? String) == "standard",
-                  let img = ((sum["thumbnail"] as? [String: Any])?["source"] ?? (sum["originalimage"] as? [String: Any])?["source"]) as? String
+                  !needImage || sum["thumbnail"] != nil || sum["originalimage"] != nil
             else { continue }
             let about = ((sum["description"] as? String ?? "") + " " + (sum["extract"] as? String ?? "")).lowercased()
             let kind = e.isShow ? (about.contains("series") || about.contains("television")) : about.contains("film")
             let rightYear = e.year.map { about.contains(String($0)) } ?? true
             guard kind, rightYear else { continue }
-            // Keep your title unless Wikipedia's is the same name, just tidier ("Moana (2026 film)" → "Moana").
-            let found = (sum["title"] as? String ?? page)
-                .replacingOccurrences(of: #"\s*\((\d{4} )?(film|TV series|miniseries)\)$"#, with: "", options: .regularExpression)
-            let name = LibraryStore.norm(found) == LibraryStore.norm(t) ? found : nil
-            return (URL(string: img), e.isShow ? nil : name)
+            return sum
         }
-        return (nil, nil)
+        return nil
     }
 }
 
@@ -298,6 +307,7 @@ struct LibraryView: View {
     @State private var store = LibraryStore.shared
     @State private var log = WatchLog.shared
     @State private var openShow: LibraryEntry?
+    @State private var openMovie: LibraryEntry?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -340,6 +350,7 @@ struct LibraryView: View {
         .foregroundStyle(Theme.text)
         .task { await store.refresh() }
         .sheet(item: $openShow) { s in EpisodesSheet(entry: s) }
+        .sheet(item: $openMovie) { m in MovieSheet(entry: m) }
     }
 
     private var header: some View {
@@ -375,7 +386,9 @@ struct LibraryView: View {
                   alignment: .leading, spacing: 22) {
             ForEach(items) { e in
                 PosterCard(entry: e) {
-                    if e.isShow { openShow = e } else { Task { await Streamer.shared.play(e.url) } }
+                    if e.isShow { openShow = e } else { openMovie = e }
+                } play: {
+                    if e.isShow { Task { await Streamer.shared.playSeason(e.url) } } else { Task { await Streamer.shared.play(e.url) } }
                 }
             }
         }
@@ -416,8 +429,10 @@ struct PosterImage: View {
 private struct PosterCard: View {
     let entry: LibraryEntry
     let action: () -> Void
+    let play: () -> Void
     @State private var hover = false
     @State private var log = WatchLog.shared
+    @State private var info = TitleInfo.shared
 
     private var progress: Double {
         entry.isShow ? 0 : log.fraction(entry.url.lastPathComponent)
@@ -434,6 +449,9 @@ private struct PosterCard: View {
         }
         return entry.year.map(String.init) ?? "Movie"
     }
+    private var stars: String? {
+        info.mine[entry.posterKey].map { String(repeating: "★", count: $0) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -445,27 +463,34 @@ private struct PosterCard: View {
                     .clipped()
                 if hover {
                     Color.black.opacity(0.35)
-                    Image(systemName: entry.isShow ? "list.bullet" : "play.fill")
+                    Image(systemName: "play.fill")
                         .font(.system(size: 22, weight: .bold))
                         .frame(width: 56, height: 56)
                         .background(Circle().fill(Theme.redFill))
+                        .contentShape(Circle())
+                        .onTapGesture(perform: play)
+                        .help(entry.isShow ? "Play from the episode you're on" : "Play now")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if progress > 0.01 {
                     Bar(fraction: progress, color: Theme.red).frame(height: 4).padding(8)
                 }
             }
+            .overlay(alignment: .topLeading) { ScoreBadge(entry: entry) }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(hover ? Theme.red : Theme.line, lineWidth: hover ? 2 : 1))
             .scaleEffect(hover ? 1.03 : 1)
             .animation(.easeOut(duration: 0.15), value: hover)
             Text(entry.title).font(Theme.body(14, .semibold)).lineLimit(1)
-            Text(subtitle).font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
+            HStack(spacing: 6) {
+                Text(subtitle).font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
+                if let stars { Text(stars).font(Theme.body(11)).foregroundStyle(Theme.red).lineLimit(1) }
+            }
         }
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(perform: action)
-        .help(entry.isShow ? "Show episodes" : (log.resumeAt(entry.url.lastPathComponent) != nil ? "Resume" : "Play"))
+        .help(info.details[entry.posterKey]?.synopsis.nilIfEmpty ?? (entry.isShow ? "Show episodes" : "What it's about"))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }
@@ -527,7 +552,7 @@ private struct EpisodesSheet: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.title).font(Theme.display(24))
+                        Text(entry.title).font(Theme.display(24)).lineLimit(1)
                         Text("Season \(entry.season ?? 1) · \(entry.episodes.count) episodes")
                             .font(Theme.body(14)).foregroundStyle(Theme.muted)
                     }
@@ -540,6 +565,7 @@ private struct EpisodesSheet: View {
                     .help("Plays from the episode you're on")
                     Button("Close") { dismiss() }.buttonStyle(GhostButtonStyle())
                 }
+                AboutBlock(entry: entry)
                 ScrollView {
                     VStack(spacing: 6) {
                         ForEach(Array(entry.episodes.enumerated()), id: \.element) { i, ep in
@@ -554,7 +580,7 @@ private struct EpisodesSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 760, height: 520)
+        .frame(width: 780, height: 600)
         .background(Theme.soil)
         .foregroundStyle(Theme.text)
     }
