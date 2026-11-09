@@ -247,8 +247,32 @@ struct SettingsView: View {
     @State private var keepAwake = Awake.shared.enabled
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Colony settings").font(Theme.display(22))
+        HStack(alignment: .top, spacing: 18) {
+            VStack(spacing: 18) {
+                SettingsCard("Downloads", icon: "arrow.down.circle.fill", color: Theme.carrierAnt) { downloads }
+                SettingsCard("Speed", icon: "gauge.with.dots.needle.67percent", color: Theme.flyerAnt) { SpeedSettings() }
+                SettingsCard("Phone", icon: "iphone", color: Theme.nightAnt) { PhoneSettings() }
+            }
+            VStack(spacing: 18) {
+                SettingsCard("Google Drive", icon: "icloud.fill", color: Theme.librarianAnt) { drive }
+                SettingsCard("Network and privacy", icon: "lock.shield.fill", color: Theme.nightAnt) { privacy }
+                SettingsCard("Brave", icon: "globe", color: Theme.carrierAnt) { brave }
+            }
+        }
+        .padding(22)
+        .frame(maxWidth: 1180, alignment: .topLeading)
+        .background(Theme.soil)
+        .foregroundStyle(Theme.text)
+    }
+
+    private func note(_ t: String, indent: Bool = false) -> some View {
+        Text(t).font(Theme.body(12)).foregroundStyle(Theme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, indent ? 20 : 0)
+    }
+
+    private var downloads: some View {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Where the ants store things").font(Theme.body(14, .semibold))
                 HStack {
@@ -269,10 +293,30 @@ struct SettingsView: View {
                     Text("Straight to Google Drive").tag(true)
                 }
                 .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 360)
-                Text("Straight to Google Drive: links go directly into Drive and never touch this Mac. Torrents and Brave downloads land here first, then are unpacked, uploaded and deleted on their own.")
-                    .font(Theme.body(12)).foregroundStyle(Theme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                note("Straight to Google Drive: links go directly into Drive and never touch this Mac. Torrents and Brave downloads land here first, then are unpacked, uploaded and deleted on their own.")
             }
+            Toggle("Watch the clipboard for crumbs (download links and magnets)", isOn: Binding(
+                get: { colony.watchClipboard }, set: { colony.watchClipboard = $0 }))
+                .toggleStyle(.checkbox)
+                .font(Theme.body(14))
+            VStack(alignment: .leading, spacing: 6) {
+                Button("Open magnet links with TorrANT") {
+                    Task {
+                        do {
+                            try await NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpenURLsWithScheme: "magnet")
+                            magnetNote = "Done. Magnet links now go to your ants."
+                        } catch {
+                            magnetNote = "macOS said no: \(error.localizedDescription)"
+                        }
+                    }
+                }
+                if !magnetNote.isEmpty { Text(magnetNote).font(Theme.body(13)).foregroundStyle(Theme.muted) }
+            }
+        }
+    }
+
+    private var drive: some View {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Google Drive folder").font(Theme.body(14, .semibold))
                 HStack {
@@ -290,61 +334,68 @@ struct SettingsView: View {
                         if p.runModal() == .OK, let u = p.url { colony.driveDirPath = u.path }
                     }
                 }
-                Text("Hover a finished download and press the cloud to move it there, or use the Google Drive page.")
-                    .font(Theme.body(12)).foregroundStyle(Theme.muted)
+                note("Hover a finished download and press the cloud to move it there, or use the Google Drive page.")
             }
-            SpeedSettings()
             HomeShareSettings()
-            PhoneSettings()
+        }
+    }
+
+    private var privacy: some View {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
                 Toggle("Encrypted torrent connections only", isOn: Binding(
                     get: { colony.requireCrypto }, set: { colony.requireCrypto = $0 }))
                     .toggleStyle(.checkbox)
                     .font(Theme.body(14))
-                Text("Turn on if your internet provider slows down torrents. Fewer people can connect, so leave it off otherwise.")
-                    .font(Theme.body(12)).foregroundStyle(Theme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 20)
+                note("Turn on if your internet provider slows down torrents. Fewer people can connect, so leave it off otherwise.", indent: true)
             }
-            Toggle("Watch the clipboard for crumbs (download links and magnets)", isOn: Binding(
-                get: { colony.watchClipboard }, set: { colony.watchClipboard = $0 }))
-                .toggleStyle(.checkbox)
-                .font(Theme.body(14))
             VStack(alignment: .leading, spacing: 2) {
                 Toggle("Keep the Mac awake while the ants work", isOn: Binding(
                     get: { keepAwake }, set: { keepAwake = $0; Awake.shared.enabled = $0 }))
                     .toggleStyle(.checkbox)
                     .font(Theme.body(14))
-                Text("Covers downloads and Google Drive uploads. The screen can still turn off. Closing a MacBook's lid still pauses everything unless it's plugged into a monitor.")
-                    .font(Theme.body(12)).foregroundStyle(Theme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 20)
+                note("Covers downloads and Google Drive uploads. The screen can still turn off. Closing a MacBook's lid still pauses everything unless it's plugged into a monitor.", indent: true)
             }
-            VStack(alignment: .leading, spacing: 6) {
-                Button("Open magnet links with TorrANT") {
-                    Task {
-                        do {
-                            try await NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpenURLsWithScheme: "magnet")
-                            magnetNote = "Done. Magnet links now go to your ants."
-                        } catch {
-                            magnetNote = "macOS said no: \(error.localizedDescription)"
-                        }
-                    }
-                }
-                if !magnetNote.isEmpty { Text(magnetNote).font(Theme.body(13)).foregroundStyle(Theme.muted) }
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Catch every Brave download").font(Theme.body(14, .semibold))
-                Text("In Brave, open brave://extensions, turn on Developer mode, click Load unpacked and pick the TorrANT Catcher folder.")
-                    .font(Theme.body(13)).foregroundStyle(Theme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Show the extension folder") { Catcher.revealExtension() }
-            }
-            Spacer()
         }
-        .padding(24)
-        .frame(maxWidth: 640, alignment: .leading)
-        .background(Theme.soil)
-        .foregroundStyle(Theme.text)
+    }
+
+    private var brave: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Catch every Brave download").font(Theme.body(14, .semibold))
+            note("In Brave, open brave://extensions, turn on Developer mode, click Load unpacked and pick the TorrANT Catcher folder.")
+            Button("Show the extension folder") { Catcher.revealExtension() }
+        }
+    }
+}
+
+/// One group of settings: an icon in its ant colour, a title, then the controls.
+struct SettingsCard<Content: View>: View {
+    let title: String
+    let icon: String
+    let color: Color
+    @ViewBuilder let content: Content
+    @State private var shown = false
+
+    init(_ title: String, icon: String, color: Color, @ViewBuilder content: () -> Content) {
+        self.title = title; self.icon = icon; self.color = color; self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: icon).font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(color)
+                    .frame(width: 34, height: 34)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(color.opacity(0.14)))
+                Text(title).font(Theme.display(19))
+            }
+            content
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
+        .opacity(shown ? 1 : 0)
+        .offset(y: shown ? 0 : 12)
+        .onAppear { withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { shown = true } }
     }
 }

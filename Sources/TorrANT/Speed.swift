@@ -88,7 +88,6 @@ struct SpeedSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Speed").font(Theme.body(14, .semibold))
             picker("Download speed", $speed.downLimit, [0, 1_000_000, 2_000_000, 5_000_000, 10_000_000])
             picker("Upload speed", $speed.upLimit, [0, 256_000, 1_000_000])
             picker("On a hotspot / Low Data Mode", $speed.meteredLimit, [0, 256_000, 512_000, 1_000_000, 2_000_000])

@@ -593,7 +593,7 @@ struct PhoneSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Phone (Telegram)").font(Theme.body(14, .semibold))
+            Text("Telegram").font(Theme.body(14, .semibold))
             switch phone.state {
             case .off, .problem:
                 Text("Send links from your phone to tonight's night shift. In Telegram, message @BotFather, send /newbot, and paste the token it gives you here.")
