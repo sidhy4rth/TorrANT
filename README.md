@@ -60,8 +60,24 @@ past food lying on the ground, so a plain download link is a crumb, grabbed on s
 eight ants at once. Everything that arrives goes into the Anthill. And when the Anthill gets full, winged ants
 fly the finds up to Google Drive, where they play straight from the cloud.
 
-The theme is there to make it fun; the screens are there to be read at a glance. Red means a swarm,
-bone means a crumb, and every label says what it means in plain words.
+The theme is there to make it fun; the screens are there to be read at a glance. The look is
+**Honey**: amber on warm charcoal, flat, with no textures. Every label says what it means in plain words.
+
+### The ant relay
+
+Every download is a line on the **Lines** dashboard, and four ants pass it along like a relay:
+
+| Ant | Colour | Job |
+|---|---|---|
+| Night ant | lavender | holds it in the queue, asleep till the night shift |
+| Carrier ant | red | brings it home to the Mac (downloading) |
+| Flyer ant | amber, with wings | flies it up to Google Drive |
+| Librarian ant | green | puts it on your Library shelf |
+
+At each station the crumb hops from one ant to the next in an arc, and the ant that handed it over
+turns and rests. The ants follow real progress and glide between readings; legs move only while
+walking, wings only while flying. A stuck download shows a grey ant with a white "!". Nothing is
+drawn while nothing moves, so an idle TorrANT costs no CPU, and macOS "Reduce motion" stills it all.
 
 ---
 
@@ -81,7 +97,7 @@ bone means a crumb, and every label says what it means in plain words.
 | **Grabs links in bulk** | Paste a web page and the ants list every video, archive, torrent and magnet on it, with sizes. Download now or leave them for the night shift. [How ↓](#link-grabber-and-night-shift) |
 | **Works the night shift** | Queued downloads run from 1 to 7 AM (your times), pause what's unfinished at the end and carry on the next night. Never starts on a hotspot or a Low Data Mode network. |
 | **Has a pocket remote** | Your own private Telegram bot. Share a link and it joins tonight's night shift, with ▶️ *Start now* and ❌ *Remove* buttons right under it. 📊 *Status* opens a live view that updates itself with progress bars, speed and time left. 🌙 *Queue* lists tonight's batch. ⏸ / ▶️ pause or wake every ant. When a movie reaches the Library, its poster arrives in the chat. Only the one phone that paired with a code shown on the Mac can use it. [How ↓](#the-pocket-remote) |
-| **Lives in one window** | Downloads, Library, Google Drive, Link Grabber and Settings are sections of one window, switched from the sidebar or with ⌘1–4. |
+| **Lives in one window** | Lines, Library, Google Drive and Link Grabber are tabs along the top (⌘1–4, an amber pill slides to the chosen one); Settings is the gear beside the Straight to Drive switch. |
 | **Keeps the Mac awake** | While anything is downloading, queued, unpacking or still uploading to Drive, the Mac won't idle-sleep. The screen can still turn off. The moment everything is done, it can sleep again. |
 | **Shares back, then stops** | Finished torrents keep feeding other colonies until they've given back as much as they took (1×), then rest. |
 | **Lives in the menu bar too** | *Ant Cam*: a pocket view of what's on the trail, with its own paste box. |
@@ -226,6 +242,12 @@ or offline* instead of showing an error.
 ---
 
 ## Library and streaming
+
+The Library opens on **Just shelved**: the newest arrival, with the green librarian ant carrying its
+poster onto the shelf. Beside it, what you were watching. Below, posters stand on shelves and rise in
+one after another; search, filter (All, Movies, Shows, Unwatched) and sort (Recently shelved, Top
+rated, A–Z). Every poster keeps its score badge, a click opens its synopsis and your stars, and
+hovering shows ▶ to play straight away.
 
 Google Drive for desktop downloads a whole file before any player can open it. TorrANT doesn't
 wait: ▶ hands VLC a private link on this Mac, served by [rclone](https://rclone.org) with a
