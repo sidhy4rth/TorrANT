@@ -136,6 +136,27 @@ version costs a fraction of that. [ADR 0003](docs/adr/0003-live-numbers-on-layer
 
 ---
 
+## How the swarm finds people
+
+A torrent is only as fast as the people TorrANT can find and reach. aria2 on its own is polite:
+it uses only the torrent's own trackers, stops asking for more people once a download passes
+50 KB/s, and never asks the router to let anyone in. TorrANT tunes it the way uTorrent and
+qBittorrent behave:
+
+- **More trackers.** The community "best trackers" list
+  ([ngosang/trackerslist](https://github.com/ngosang/trackerslist)) is added to every torrent and
+  magnet, refreshed daily, with a built-in fallback, so a bare magnet finds people in seconds.
+- **Never stop looking.** TorrANT keeps asking trackers and the DHT for more people however fast
+  it's going, and talks to up to 150 per torrent.
+- **An open door.** One fixed port for peers and the DHT, which TorrANT asks the router to forward
+  (NAT-PMP, then UPnP), renews while it runs and closes on quit. With the door open other people
+  can connect *to* you, not only you to them. The torrent's detail view says whether it's open;
+  phone hotspots and some ISP routers keep it closed.
+- **IPv6.** When the Mac has a public IPv6 address (common on Indian mobile and fibre networks),
+  TorrANT joins the IPv6 DHT too, where there's usually no router in the way at all.
+
+---
+
 ## Catching every Brave download
 
 Once TorrANT Catcher is loaded in Brave, every download Brave starts is offered to TorrANT the moment Brave
@@ -269,6 +290,7 @@ Everything below was run on a real Mac (macOS 26, Apple Silicon) and looked at, 
 | Library | Seven titles in Drive | All seven posters, cleaned titles, episode counts |
 | Link Grabber | Two Blender release pages | 75 and 11 links with names and sizes; 1 MB of data used |
 | Night shift | Short test windows | Sent on time, *Night shift done ✓*, and unfinished downloads paused at the end |
+| Finding people for a magnet | A bare Sintel magnet (no trackers), old vs new settings, 45 s each, capped at 30 KB/s | Old: 0 people, never got the file list. New: 70 people, 10 with the whole file |
 | Torrents from the phone and night shift | A valid and a broken test `.torrent` in a night batch | The valid one started with no file-picker sheet; the broken one was reported once and not retried |
 | Pocket remote | Paired an Android phone, sent "status" and a link from Telegram | Bot answered from the Mac; the link landed in the night queue with its size and ▶️ / ❌ buttons |
 | Zip link, Straight to Drive | A 3 MB zip of 848 small files | Unpacked on the Mac, uploaded (about 6½ minutes), Mac copy gone |

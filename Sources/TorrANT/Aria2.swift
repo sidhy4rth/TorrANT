@@ -50,7 +50,7 @@ final class Aria2: @unchecked Sendable {
         let session = support.appendingPathComponent("colony.session")
         if !fm.fileExists(atPath: session.path) { fm.createFile(atPath: session.path, contents: Data()) }
 
-        let args = [
+        var args = [
             "--enable-rpc=true",
             "--rpc-listen-all=false",
             "--rpc-listen-port=\(port)",
@@ -79,7 +79,18 @@ final class Aria2: @unchecked Sendable {
             "--dht-file-path=\(support.appendingPathComponent("dht.dat").path)",
             "--bt-enable-lpd=true",
             "--enable-peer-exchange=true",
-            "--bt-max-peers=80",
+            // Swarm tuning, the way uTorrent / qBittorrent behave (see SwarmTuning.swift):
+            // one fixed port for peers and the DHT, so the router mapping and the DHT stay valid,
+            "--listen-port=\(SwarmTuning.port)",
+            "--dht-listen-port=\(SwarmTuning.port)",
+            // well-known public trackers added to every torrent and magnet,
+            "--bt-tracker=\(SwarmTuning.trackers(support).joined(separator: ","))",
+            "--bt-tracker-connect-timeout=10",
+            "--bt-tracker-timeout=20",
+            // keep asking for more people (aria2 stops at 50 KB/s by default),
+            "--bt-request-peer-speed-limit=100M",
+            // and talk to more of them at once.
+            "--bt-max-peers=150",
             "--seed-ratio=1.0",
             "--follow-torrent=mem",
             "--bt-save-metadata=false",
@@ -90,6 +101,10 @@ final class Aria2: @unchecked Sendable {
             "--summary-interval=0",
             "--quiet=true",
         ]
+        // IPv6 peers and DHT when the Mac has a public IPv6 address (common on Jio and Airtel).
+        if let v6 = SwarmTuning.globalIPv6() {
+            args += ["--enable-dht6=true", "--dht-listen-addr6=\(v6)", "--dht-file-path6=\(support.appendingPathComponent("dht6.dat").path)"]
+        }
         let p = Process()
         // The copy inside the app brings OpenSSL's plug-ins; tell OpenSSL where they are so it
         // never reaches for a Homebrew install (which a friend's Mac won't have).

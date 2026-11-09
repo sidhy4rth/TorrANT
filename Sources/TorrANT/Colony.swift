@@ -83,6 +83,14 @@ final class Colony {
         do {
             try aria.start(downloadDir: downloadDir, support: support)
             say("Colony waking up")
+            PortMapper.shared.start(port: SwarmTuning.port)
+            // Today's tracker list, for torrents added from now on.
+            let sup = support
+            Task {
+                if let fresh = await SwarmTuning.refreshTrackers(sup) {
+                    try? await aria.call("aria2.changeGlobalOption", [["bt-tracker": fresh.joined(separator: ",")]])
+                }
+            }
         } catch {
             problem = error.localizedDescription
             say("Couldn't wake the colony: \(error.localizedDescription)")
@@ -95,6 +103,7 @@ final class Colony {
 
     func shutdown() {
         Awake.shared.release()
+        PortMapper.shared.stop(port: SwarmTuning.port)
         aria.stop()
     }
 

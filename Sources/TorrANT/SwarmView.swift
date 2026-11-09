@@ -13,6 +13,15 @@ struct SwarmView: View {
         colony.trail.first { $0.gid == gid } ?? colony.seeding.first { $0.gid == gid }
     }
 
+    /// Whether other people can connect to us (the router opened the port) or only we to them.
+    private var doorText: String {
+        switch PortMapper.shared.door {
+        case .checking: "Checking the door…"
+        case .open(let how): "Door open (\(how)): other colonies can reach us"
+        case .closed: "Door closed: this network doesn't let others reach us, so we only reach out"
+        }
+    }
+
     var body: some View {
         Group {
             if let c = crumb { content(c) } else { gone }
@@ -191,7 +200,7 @@ struct SwarmView: View {
                     }
                 }
                 Spacer(minLength: 0)
-                Text("Secret tunnels (encryption) on · Ants find each other on their own (DHT) on")
+                Text("Secret tunnels (encryption) on · Ants find each other on their own (DHT) on · \(doorText)")
                     .font(Theme.body(12)).foregroundStyle(Theme.muted)
             }
             .frame(maxHeight: .infinity, alignment: .top)
