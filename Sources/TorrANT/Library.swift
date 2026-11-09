@@ -93,6 +93,28 @@ struct LibraryEntry: Identifiable, Equatable {
 }
 
 enum Titles {
+    /// What a release name says about quality: "1080p", "Hindi + English", "Subs", "HDR".
+    static func tags(_ raw: String) -> [String] {
+        let u = raw.uppercased()
+        var out: [String] = []
+        if u.range(of: #"2160P|\b4K\b|UHD"#, options: .regularExpression) != nil { out.append("4K") }
+        else if let m = u.range(of: #"\b(1080|720|480)P\b"#, options: .regularExpression) { out.append(String(u[m]).lowercased()) }
+        let names = ["HIN": "Hindi", "ENG": "English", "FRE": "French", "FRA": "French", "TAM": "Tamil", "TEL": "Telugu",
+                     "KOR": "Korean", "JPN": "Japanese", "JAP": "Japanese", "SPA": "Spanish", "GER": "German", "ITA": "Italian",
+                     "MAL": "Malayalam", "KAN": "Kannada", "BEN": "Bengali", "PUN": "Punjabi", "CHI": "Chinese"]
+        if let m = u.range(of: #"\b([A-Z]{3})(-[A-Z]{3})+\b"#, options: .regularExpression) {
+            let langs = u[m].split(separator: "-").compactMap { names[String($0)] }
+            if langs.count >= 2 { out.append(langs.joined(separator: " + ")) }
+        } else if u.contains("DUAL AUDIO") || u.contains("DUAL-AUDIO") {
+            out.append("Dual audio")
+        } else if u.contains("HINDI") {
+            out.append("Hindi")
+        }
+        if u.range(of: #"\b(E|M)?SUBS?\b"#, options: .regularExpression) != nil { out.append("Subs") }
+        if u.range(of: #"\bHDR(10)?\b|DOLBY.?VISION|\bDV\b"#, options: .regularExpression) != nil { out.append("HDR") }
+        return out
+    }
+
     /// "Marshals.S01E05.1080p.WEB-DL.mkv" → "Marshals · S01 E05"; "Moana.2026.1080p.mkv" → "Moana (2026)".
     static func pretty(_ raw: String) -> String {
         let p = parse(raw)

@@ -456,17 +456,36 @@ struct DriveView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            let going = watcher.items.filter { !$0.uploaded }
+            let safe = watcher.items.filter(\.uploaded)
             ScrollView {
-                LazyVStack(spacing: 10) {
-                    ForEach(uploads) { j in UploadRow(job: j) }
-                    ForEach(unpacking, id: \.key) { u in UnpackRow(id: u.key, name: u.value) }
-                    ForEach(moving, id: \.key) { m in MovingRow(name: m.value) }
-                    ForEach(watcher.items) { it in DriveRow(item: it) }
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if !(uploads.isEmpty && unpacking.isEmpty && moving.isEmpty && going.isEmpty) {
+                        sectionTitle("Flying up now", "\(uploads.count + unpacking.count + moving.count + going.count)", Theme.flyerAnt)
+                        ForEach(uploads) { j in UploadRow(job: j) }
+                        ForEach(unpacking, id: \.key) { u in UnpackRow(id: u.key, name: u.value) }
+                        ForEach(moving, id: \.key) { m in MovingRow(name: m.value) }
+                        ForEach(going) { it in DriveRow(item: it) }
+                    }
+                    if !safe.isEmpty {
+                        sectionTitle("Safe in Drive", "\(safe.count) · \(Fmt.bytes(safe.reduce(0) { $0 + $1.size }))", Theme.safe)
+                            .padding(.top, 6)
+                        ForEach(safe) { it in DriveRow(item: it) }
+                    }
                 }
                 .padding(.bottom, 12)
             }
             .scrollIndicators(.never)
         }
+    }
+
+    private func sectionTitle(_ t: String, _ n: String, _ c: Color) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(c).frame(width: 8, height: 8)
+            Text(t).font(Theme.display(17))
+            Text(n).font(Theme.body(13)).foregroundStyle(Theme.muted)
+        }
+        .padding(.leading, 4)
     }
 
     private var noDrive: some View {
@@ -528,7 +547,8 @@ struct DriveRow: View {
             mainRow
             if expanded && item.isFolder { EpisodeList(folder: item.url) }
         }
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(hover ? Theme.surface2 : Theme.surface))
+        .background(RoundedRectangle(cornerRadius: item.uploaded ? 14 : 18, style: .continuous).fill(hover ? Theme.surface2 : Theme.surface))
+        .animation(.easeOut(duration: 0.15), value: hover)
     }
 
     private func play() {
@@ -538,16 +558,89 @@ struct DriveRow: View {
         }
     }
 
+    private var entry: LibraryEntry? {
+        LibraryStore.shared.entries.first { $0.url.standardizedFileURL.path == item.url.standardizedFileURL.path }
+    }
+
+    /// The Library's poster for this file or folder, if it has one.
+    private var posterURL: URL? { entry.flatMap { LibraryStore.shared.posters[$0.posterKey] } }
+
+    /// The Library's proper title ("Avengers: Age of Ultron (2015)"), else one cleaned from the file name.
+    private var displayName: String {
+        guard let e = entry else { return Titles.pretty(item.name) }
+        if e.isShow { return "\(e.title) · S\(String(format: "%02d", e.season ?? 1))" }
+        return e.title + (e.year.map { " (\($0))" } ?? "")
+    }
+
+    private var thumb: some View {
+        Group {
+            if let u = posterURL, let img = PosterCache.image(u) {
+                Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                ZStack {
+                    Theme.surface2
+                    Image(systemName: item.isFolder ? "folder.fill" : "film")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(item.uploaded ? Theme.safe : Theme.red)
+                }
+            }
+        }
+        .frame(width: 32, height: 48)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private var tagRow: some View {
+        HStack(spacing: 5) {
+            ForEach(Titles.tags(item.name), id: \.self) { t in
+                Text(t).font(Theme.body(11, .semibold)).foregroundStyle(Theme.text.opacity(0.85))
+                    .padding(.horizontal, 7).frame(height: 20)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.surface2))
+            }
+        }
+    }
+
     private var mainRow: some View {
+        Group {
+            if item.uploaded { compactRow } else { goingRow }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, item.uploaded ? 8 : 12)
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .onTapGesture(count: 2) { play() }
+        .help(item.problem == "paused" ? "Google Drive can't upload right now. Syncing is paused or there's no internet."
+              : item.problem ?? "\(item.name)\n\n" + (item.isFolder ? "Double-click to play the season in VLC" : "Double-click to play in VLC"))
+        .contextMenu { menu }
+    }
+
+    /// Safe in Drive: one short line, no bar.
+    private var compactRow: some View {
+        HStack(spacing: 12) {
+            thumb
+            VStack(alignment: .leading, spacing: 5) {
+                Text(displayName).font(Theme.body(15, .semibold)).lineLimit(1)
+                HStack(spacing: 8) {
+                    tagRow
+                    Text("\(Fmt.bytes(item.size)) · \(placeText)").font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 5) {
+                Image(systemName: "checkmark").font(.system(size: 11, weight: .heavy))
+                Text("In Drive")
+            }
+            .font(Theme.body(12, .bold)).foregroundStyle(Theme.safe)
+            controls
+        }
+    }
+
+    private var goingRow: some View {
         HStack(spacing: 14) {
-            Image(systemName: item.isFolder ? "folder.fill" : "film")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(item.uploaded ? Theme.safe : Theme.red)
-                .frame(width: 40, height: 40)
-                .background(Circle().fill(Theme.surface2))
+            thumb
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 10) {
-                    Text(item.name).font(Theme.body(15, .semibold)).lineLimit(1).truncationMode(.middle)
+                    Text(displayName).font(Theme.body(15, .semibold)).lineLimit(1)
+                    tagRow
                     Spacer(minLength: 8)
                     if showsPercent {
                         LiveLabel(live: liveRow, font: LiveFont.body(13, 600), color: statusColor, align: .right) { now in
@@ -558,7 +651,7 @@ struct DriveRow: View {
                         Text(statusText).font(Theme.body(13, .semibold)).foregroundStyle(statusColor)
                     }
                 }
-                LiveBarLayer(live: liveRow, color: item.uploaded ? Theme.safe : Theme.red, ant: Theme.chalk) { now in
+                LiveBarLayer(live: liveRow, color: Theme.flyerAnt, ant: Theme.chalk) { now in
                     item.uploaded ? 1 : watcher.liveFraction(item.id, now)
                 }
                 .frame(height: 18)
@@ -578,14 +671,6 @@ struct DriveRow: View {
             }
             controls
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .contentShape(Rectangle())
-        .onHover { hover = $0 }
-        .onTapGesture(count: 2) { play() }
-        .help(item.problem == "paused" ? "Google Drive can't upload right now. Syncing is paused or there's no internet."
-              : item.problem ?? (item.isFolder ? "Double-click to play the season in VLC" : "Double-click to play in VLC"))
-        .contextMenu { menu }
     }
 
     private var liveRow: Bool { watcher.moving && !item.uploaded }
@@ -731,7 +816,7 @@ private struct MovingRow: View {
         HStack(spacing: 14) {
             ProgressView().controlSize(.small).frame(width: 40, height: 40)
             VStack(alignment: .leading, spacing: 4) {
-                Text(name).font(Theme.body(15, .semibold)).lineLimit(1).truncationMode(.middle)
+                Text(Titles.pretty(name)).font(Theme.body(15, .semibold)).lineLimit(1).help(name)
                 Text("Moving into Google Drive…").font(Theme.body(13)).foregroundStyle(Theme.muted)
             }
             Spacer()
@@ -754,7 +839,7 @@ private struct UploadRow: View {
                 .background(Circle().fill(Theme.surface2))
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 10) {
-                    Text(job.name).font(Theme.body(15, .semibold)).lineLimit(1).truncationMode(.middle)
+                    Text(Titles.pretty(job.name)).font(Theme.body(15, .semibold)).lineLimit(1).help(job.name)
                     Spacer(minLength: 8)
                     LiveLabel(live: true, font: LiveFont.body(13, 600), color: Theme.red, align: .right) { now in
                         job.size > 0 ? String(format: "%.1f%%", Uploader.shared.liveFraction(job, now) * 100) : "Starting…"
@@ -790,7 +875,7 @@ private struct UnpackRow: View {
                 .background(Circle().fill(Theme.surface2))
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 10) {
-                    Text(name).font(Theme.body(15, .semibold)).lineLimit(1).truncationMode(.middle)
+                    Text(Titles.pretty(name)).font(Theme.body(15, .semibold)).lineLimit(1).help(name)
                     Spacer(minLength: 8)
                     LiveLabel(live: true, font: LiveFont.body(13, 600), color: Theme.red, align: .right) { now in
                         String(format: "%.1f%%", Colony.shared.liveUnpack(id, now) * 100)
