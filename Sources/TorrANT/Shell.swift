@@ -10,7 +10,7 @@ final class Nav {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .downloads: "Downloads"
+            case .downloads: "Lines"
             case .library: "Library"
             case .drive: "Google Drive"
             case .grabber: "Link Grabber"
@@ -42,86 +42,121 @@ final class Nav {
     }
 }
 
-/// The one window: sidebar on the left, the chosen section on the right.
+/// The one window: tabs along the top, the chosen section below.
 struct RootView: View {
     @State private var nav = Nav.shared
     var body: some View {
-        HStack(spacing: 0) {
-            Rail()
+        VStack(spacing: 0) {
+            TopBar()
             ZStack {
                 switch nav.section {
-                case .downloads: ColonyView()
-                case .library: LibraryView()
-                case .drive: DriveView()
-                case .grabber: GrabberView()
-                case .settings: SettingsPage()
+                case .downloads: ColonyView().transition(.pageSwap)
+                case .library: LibraryView().transition(.pageSwap)
+                case .drive: DriveView().transition(.pageSwap)
+                case .grabber: GrabberView().transition(.pageSwap)
+                case .settings: SettingsPage().transition(.pageSwap)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
         }
         .background(Theme.soil)
+        .tint(Theme.red)   // switches, checkboxes and pickers in amber, not system blue
         .ignoresSafeArea(.container, edges: .top)
     }
 }
 
-private struct Rail: View {
+extension AnyTransition {
+    /// The old page fades out; the new one fades in while sliding up a touch.
+    static var pageSwap: AnyTransition {
+        .asymmetric(insertion: .opacity.combined(with: .offset(y: 10)), removal: .opacity)
+    }
+}
+
+/// Logo, section tabs (an amber pill slides to the chosen one), the Drive switch and Settings.
+private struct TopBar: View {
     @State private var nav = Nav.shared
     @Bindable private var colony = Colony.shared
     @State private var night = NightShift.shared
     @State private var up = Uploader.shared
+    @Namespace private var pill
+
+    private static let tabs: [Nav.Section] = [.downloads, .library, .drive, .grabber]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // The window's traffic lights sit above this.
-            HStack(spacing: 10) {
-                AntGlyph(color: Theme.red).frame(width: 28)
-                (Text("Torr") + Text("ANT").foregroundColor(Theme.red)).font(Theme.display(22))
+        HStack(spacing: 14) {
+            HStack(spacing: 9) {
+                AntGlyph(color: Theme.red).frame(width: 26)
+                (Text("Torr") + Text("ANT").foregroundColor(Theme.red)).font(Theme.display(21))
             }
-            .padding(.top, 50)
-            .padding(.leading, 18)
-            .padding(.bottom, 18)
-
-            ForEach(Nav.Section.allCases.filter { $0 != .settings }) { s in
-                RailItem(section: s, selected: nav.section == s, badge: badge(s)) {
-                    withAnimation(.easeOut(duration: 0.12)) { nav.section = s }
+            HStack(spacing: 2) {
+                ForEach(Self.tabs) { s in
+                    let on = nav.section == s
+                    Button { go(s) } label: {
+                        HStack(spacing: 7) {
+                            Text(s.title).font(Theme.body(14, .bold))
+                            if let (text, color) = badge(s) {
+                                Text(text).font(Theme.body(11, .bold))
+                                    .foregroundStyle(on ? Theme.onAccent : color)
+                                    .padding(.horizontal, 6).padding(.vertical, 1)
+                                    .background(Capsule().fill(on ? Theme.onAccent.opacity(0.15) : Theme.surface2))
+                            }
+                        }
+                        .foregroundStyle(on ? Theme.onAccent : Theme.muted)
+                        .padding(.horizontal, 16)
+                        .frame(height: 34)
+                        .background {
+                            if on { Capsule().fill(Theme.red).matchedGeometryEffect(id: "pill", in: pill) }
+                        }
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(s.title) (⌘\(String(s.key.character)))")
+                    .accessibilityAddTraits(on ? .isSelected : [])
                 }
             }
-
-            Spacer()
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Circle().fill(colony.online ? Theme.safe : Theme.swarm).frame(width: 8, height: 8)
-                    Text(colony.online ? "Colony online · \(colony.antsOut) ants out" : (colony.problem ?? "Waking the colony…"))
-                        .font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
-                }
-                DriveModeSwitch()
+            .padding(3)
+            .background(Capsule().fill(Theme.surface))
+            Spacer(minLength: 8)
+            HStack(spacing: 7) {
+                Circle().fill(colony.online ? Theme.safe : Theme.swarm).frame(width: 7, height: 7)
+                Text(colony.online ? "\(colony.antsOut) ants out" : (colony.problem ?? "Waking the colony…"))
+                    .font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 6)
-            RailItem(section: .settings, selected: nav.section == .settings, badge: nil) {
-                withAnimation(.easeOut(duration: 0.12)) { nav.section = .settings }
+            DriveModeSwitch()
+            Button { go(.settings) } label: {
+                Image(systemName: "gearshape.fill").font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(nav.section == .settings ? Theme.onAccent : Theme.text)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(nav.section == .settings ? Theme.red : Theme.surface))
             }
-            .padding(.bottom, 14)
+            .buttonStyle(.plain)
+            .help("Settings (⌘,)")
+            .accessibilityLabel("Settings")
         }
-        .frame(width: 228)
-        .frame(maxHeight: .infinity)
+        .padding(.leading, 84)   // the window's traffic lights
+        .padding(.trailing, 18)
+        .frame(height: 58)
         .background(Theme.deep)
-        .overlay(alignment: .trailing) { Rectangle().fill(Theme.surface2).frame(width: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
     }
 
-    /// Small live counts beside each section.
+    private func go(_ s: Nav.Section) {
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { nav.section = s }
+    }
+
+    /// Small live counts beside each tab.
     private func badge(_ s: Nav.Section) -> (String, Color)? {
         switch s {
         case .downloads:
             let n = colony.trail.filter { $0.state == .active || $0.state == .waiting }.count
-            return n > 0 ? ("\(n)", Theme.red) : nil
+            return n > 0 ? ("\(n)", Theme.swarmText) : nil
         case .drive:
             let n = up.jobs.count + colony.carrying.count + colony.unpacking.count
             return n > 0 ? ("\(n) ↑", Theme.red) : nil
         case .grabber:
             let n = night.waiting.count
-            return n > 0 ? ("☾ \(n)", Theme.chalk) : nil
+            return n > 0 ? ("☾ \(n)", Theme.nightAnt) : nil
         case .library, .settings:
             return nil
         }
@@ -148,44 +183,5 @@ private struct SettingsPage: View {
         .background(SoilBackground().ignoresSafeArea())
         .ignoresSafeArea(.container, edges: .top)
         .foregroundStyle(Theme.text)
-    }
-}
-
-private struct RailItem: View {
-    let section: Nav.Section
-    let selected: Bool
-    let badge: (String, Color)?
-    let action: () -> Void
-    @State private var hover = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: section.icon).font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(selected ? Theme.red : Theme.muted)
-                    .frame(width: 20)
-                Text(section.title).font(Theme.body(15, selected ? .bold : .semibold))
-                    .foregroundStyle(selected ? Theme.text : Theme.muted)
-                Spacer()
-                if let (text, color) = badge {
-                    Text(text).font(Theme.body(11, .bold)).foregroundStyle(color)
-                        .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(Capsule().fill(Theme.surface2))
-                }
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 40)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(selected ? Theme.surface2 : (hover ? Theme.surface : .clear)))
-            .overlay(alignment: .leading) {
-                if selected { Capsule().fill(Theme.red).frame(width: 3, height: 18).offset(x: -1) }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 10)
-        .onHover { hover = $0 }
-        .help("\(section.title) (⌘\(String(section.key.character)))")
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

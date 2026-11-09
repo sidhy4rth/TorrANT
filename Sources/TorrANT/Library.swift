@@ -82,15 +82,27 @@ struct LibraryEntry: Identifiable, Equatable {
     let episodes: [URL]
     /// What's shown: the proper name once Wikipedia / TVmaze found one.
     var title: String
+    /// When it landed in the Library folder (newest first in "Recently shelved").
+    var added: Date = .distantPast
     var posterKey: String { isShow ? "show:\(parsed.lowercased())" : "movie:\(parsed.lowercased()):\(year ?? 0)" }
 
-    init(url: URL, isShow: Bool, title: String, year: Int?, season: Int?, episodes: [URL]) {
+    init(url: URL, isShow: Bool, title: String, year: Int?, season: Int?, episodes: [URL], added: Date = .distantPast) {
         self.url = url; self.isShow = isShow; self.parsed = title; self.title = title
-        self.year = year; self.season = season; self.episodes = episodes
+        self.year = year; self.season = season; self.episodes = episodes; self.added = added
     }
 }
 
 enum Titles {
+    /// "Marshals.S01E05.1080p.WEB-DL.mkv" → "Marshals · S01 E05"; "Moana.2026.1080p.mkv" → "Moana (2026)".
+    static func pretty(_ raw: String) -> String {
+        let p = parse(raw)
+        guard !p.title.isEmpty else { return raw }
+        if let s = p.season {
+            return "\(p.title) · S\(String(format: "%02d", s))" + (p.episode.map { " E\(String(format: "%02d", $0))" } ?? "")
+        }
+        return p.title + (p.year.map { " (\($0))" } ?? "")
+    }
+
     /// "The.Invite.2026.1080p.10bit.BluRay…" → ("The Invite", 2026, nil, nil)
     /// "Campus.Drivers.S01E03.1080p…" → ("Campus Drivers", nil, 1, 3)
     static func parse(_ raw: String) -> (title: String, year: Int?, season: Int?, episode: Int?) {
@@ -186,19 +198,22 @@ final class LibraryStore {
 
     nonisolated static func scan(_ root: URL) -> [LibraryEntry] {
         let fm = FileManager.default
-        let top = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .addedToDirectoryDateKey, .creationDateKey]
+        let top = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])) ?? []
         var out: [LibraryEntry] = []
         for u in top {
-            let isDir = (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            let v = try? u.resourceValues(forKeys: keys)
+            let isDir = v?.isDirectory == true
+            let added = v?.addedToDirectoryDate ?? v?.creationDate ?? .distantPast
             let p = Titles.parse(u.lastPathComponent)
             if isDir {
                 let eps = Streamer.episodes(in: u)
                 guard !eps.isEmpty else { continue }
                 let show = p.season != nil || eps.count > 1
                 out.append(LibraryEntry(url: u, isShow: show, title: p.title, year: p.year, season: p.season ?? 1,
-                                        episodes: show ? eps : []))
+                                        episodes: show ? eps : [], added: added))
             } else if Streamer.isVideo(u) {
-                out.append(LibraryEntry(url: u, isShow: false, title: p.title, year: p.year, season: nil, episodes: []))
+                out.append(LibraryEntry(url: u, isShow: false, title: p.title, year: p.year, season: nil, episodes: [], added: added))
             }
         }
         return out.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
@@ -306,12 +321,19 @@ final class LibraryStore {
 struct LibraryView: View {
     @State private var store = LibraryStore.shared
     @State private var log = WatchLog.shared
+    @State private var info = TitleInfo.shared
     @State private var openShow: LibraryEntry?
     @State private var openMovie: LibraryEntry?
+    @State private var filter: Filter = .all
+    @State private var sort: Sort = .recent
+    @State private var query = ""
+
+    enum Filter: String, CaseIterable { case all = "All", movies = "Movies", shows = "Shows", unwatched = "Unwatched" }
+    enum Sort: String, CaseIterable { case recent = "Recently shelved", top = "Top rated", az = "A–Z" }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            toolbar
             if Colony.shared.driveDir == nil {
                 empty("Google Drive isn't set up.", "Install Google Drive for desktop and sign in.")
             } else if store.entries.isEmpty {
@@ -319,79 +341,144 @@ struct LibraryView: View {
                       "Things you send to Google Drive show up here, ready to stream.")
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 26) {
-                        let cont = store.continueWatching
-                        if !cont.isEmpty {
-                            section("Continue watching")
-                            ScrollView(.horizontal) {
-                                HStack(spacing: 14) {
-                                    ForEach(cont, id: \.file) { c in ContinueCard(entry: c.entry, file: c.file) }
-                                }
-                                .padding(.horizontal, 2)
-                            }
-                            .scrollIndicators(.never)
-                        }
-                        if !store.movies.isEmpty {
-                            section("Movies")
-                            grid(store.movies)
-                        }
-                        if !store.shows.isEmpty {
-                            section("Shows")
-                            grid(store.shows)
+                    VStack(alignment: .leading, spacing: 20) {
+                        top
+                        chips
+                        let list = visible
+                        if list.isEmpty {
+                            Text("Nothing matches.").font(Theme.body(15)).foregroundStyle(Theme.muted)
+                                .frame(maxWidth: .infinity).padding(.top, 30)
+                        } else {
+                            Shelves(entries: list, open: open, play: play)
                         }
                     }
-                    .padding(22)
+                    .padding(.horizontal, 22).padding(.top, 16).padding(.bottom, 26)
                 }
                 .scrollIndicators(.never)
             }
         }
         .background(SoilBackground().ignoresSafeArea())
-        .ignoresSafeArea(.container, edges: .top)
         .foregroundStyle(Theme.text)
         .task { await store.refresh() }
         .sheet(item: $openShow) { s in EpisodesSheet(entry: s) }
         .sheet(item: $openMovie) { m in MovieSheet(entry: m) }
     }
 
-    private var header: some View {
+    private func open(_ e: LibraryEntry) { if e.isShow { openShow = e } else { openMovie = e } }
+    private func play(_ e: LibraryEntry) {
+        Task { if e.isShow { await Streamer.shared.playSeason(e.url) } else { await Streamer.shared.play(e.url) } }
+    }
+
+    // MARK: Filtering and sorting
+
+    private var visible: [LibraryEntry] {
+        var list = store.entries
+        switch filter {
+        case .all: break
+        case .movies: list = list.filter { !$0.isShow }
+        case .shows: list = list.filter(\.isShow)
+        case .unwatched:
+            list = list.filter { e in e.isShow ? e.episodes.contains { !log.finished($0.lastPathComponent) } : !log.finished(e.url.lastPathComponent) }
+        }
+        let q = query.trimmingCharacters(in: .whitespaces)
+        if !q.isEmpty { list = list.filter { $0.title.localizedCaseInsensitiveContains(q) } }
+        switch sort {
+        case .recent: list.sort { $0.added > $1.added }
+        case .top: list.sort { rating($0) > rating($1) }
+        case .az: list.sort { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        }
+        return list
+    }
+
+    /// Any score as 0–100 so films (percent) and shows (out of 10) sort together.
+    private func rating(_ e: LibraryEntry) -> Double {
+        guard let s = info.details[e.posterKey]?.score else { return -1 }
+        let digits = s.filter { $0.isNumber || $0 == "." }
+        guard let v = Double(digits) else { return -1 }
+        return s.contains("%") || v > 10 ? v : v * 10
+    }
+
+    // MARK: Top: the newest arrival, and what you were watching
+
+    private var top: some View {
+        let newest = store.entries.max { $0.added < $1.added }
+        let cont = store.continueWatching
+        return HStack(alignment: .top, spacing: 16) {
+            if let n = newest {
+                Spotlight(entry: n, shelfMates: Array(store.entries.filter { $0.id != n.id }.sorted { $0.added > $1.added }.prefix(2)),
+                          open: { open(n) }, play: { play(n) })
+            }
+            if !cont.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Continue watching").font(Theme.display(17))
+                    ForEach(cont.prefix(2), id: \.file) { c in ContinueCard(entry: c.entry, file: c.file) }
+                    Spacer(minLength: 0)
+                }
+                .padding(16)
+                .frame(width: 330, height: 236, alignment: .topLeading)
+                .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
+            }
+        }
+        .frame(height: 236)
+    }
+
+    private var chips: some View {
+        HStack(spacing: 8) {
+            ForEach(Filter.allCases, id: \.self) { f in
+                chip(f.rawValue + count(f), on: filter == f) { filter = f }
+            }
+            Spacer()
+            Text("Sort").font(Theme.body(13)).foregroundStyle(Theme.muted)
+            ForEach(Sort.allCases, id: \.self) { s in
+                chip(s.rawValue, on: sort == s, soft: true) { sort = s }
+            }
+        }
+    }
+
+    private func count(_ f: Filter) -> String {
+        let n: Int
+        switch f {
+        case .all: n = store.entries.count
+        case .movies: n = store.movies.count
+        case .shows: n = store.shows.count
+        case .unwatched: n = store.entries.filter { e in e.isShow ? e.episodes.contains { !log.finished($0.lastPathComponent) } : !log.finished(e.url.lastPathComponent) }.count
+        }
+        return " \(n)"
+    }
+
+    private func chip(_ t: String, on: Bool, soft: Bool = false, _ action: @escaping () -> Void) -> some View {
+        Button { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { action() } } label: {
+            Text(t).font(Theme.body(13, .bold))
+                .foregroundStyle(on ? (soft ? Theme.softText : Theme.soil) : Theme.text)
+                .padding(.horizontal, 14).frame(height: 32)
+                .background(Capsule().fill(on ? (soft ? Theme.soft : Theme.text) : Theme.surface))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var toolbar: some View {
         HStack(spacing: 14) {
-            Image(systemName: "play.rectangle.on.rectangle.fill").font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(Theme.red)
             Text("Library").font(Theme.display(24))
-            Text("Everything in your Drive, ready to stream.").font(Theme.body(14)).foregroundStyle(Theme.muted)
+            Text("\(store.entries.count) titles · everything streams from Drive").font(Theme.body(14)).foregroundStyle(Theme.muted)
                 .lineLimit(1).layoutPriority(-1)
             Spacer()
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.muted)
+                TextField("", text: $query, prompt: Text("Search your Library").foregroundColor(Theme.muted))
+                    .textFieldStyle(.plain).font(Theme.body(14))
+            }
+            .padding(.horizontal, 14).frame(width: 280, height: 36)
+            .background(Capsule().fill(Theme.surface))
             Button { Task { await store.retryMissing() } } label: {
                 Image(systemName: "arrow.clockwise").font(.system(size: 13, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surface))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Theme.surface))
             }
             .buttonStyle(.plain)
             .help("Look for new things in Drive, and try again for missing posters")
         }
-        .padding(.leading, 22)
-        .padding(.trailing, 18)
-        .frame(height: 54)
-        .background(Theme.deep)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.surface2).frame(height: 1) }
-    }
-
-    private func section(_ t: String) -> some View {
-        Text(t).font(Theme.display(22))
-    }
-
-    private func grid(_ items: [LibraryEntry]) -> some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 168, maximum: 200), spacing: 18, alignment: .top)],
-                  alignment: .leading, spacing: 22) {
-            ForEach(items) { e in
-                PosterCard(entry: e) {
-                    if e.isShow { openShow = e } else { openMovie = e }
-                } play: {
-                    if e.isShow { Task { await Streamer.shared.playSeason(e.url) } } else { Task { await Streamer.shared.play(e.url) } }
-                }
-            }
-        }
+        .padding(.horizontal, 22)
+        .frame(height: 58)
     }
 
     private func empty(_ t: String, _ sub: String) -> some View {
@@ -401,6 +488,191 @@ struct LibraryView: View {
             Text(sub).font(Theme.body(15)).foregroundStyle(Theme.muted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Posters standing on shelves, a row per shelf; they rise in one after another.
+private struct Shelves: View {
+    let entries: [LibraryEntry]
+    let open: (LibraryEntry) -> Void
+    let play: (LibraryEntry) -> Void
+    @State private var width: CGFloat = 1000
+    private let gap: CGFloat = 18
+
+    var body: some View {
+        let cols = max(4, Int((width + gap) / (150 + gap)))
+        let colW = (width - gap * CGFloat(cols - 1)) / CGFloat(cols)
+        let rows = stride(from: 0, to: entries.count, by: cols).map { Array(entries[$0..<min($0 + cols, entries.count)]) }
+        VStack(alignment: .leading, spacing: 26) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { r, row in
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.track)
+                        .frame(width: width, height: 8)
+                        .offset(y: colW * 1.5 - 2)
+                    HStack(alignment: .top, spacing: gap) {
+                        ForEach(Array(row.enumerated()), id: \.element.id) { i, e in
+                            PosterCard(entry: e, order: r * cols + i) { open(e) } play: { play(e) }
+                                .frame(width: colW)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(GeometryReader { g in
+            Color.clear.onAppear { width = g.size.width }.onChange(of: g.size.width) { _, w in width = w }
+        })
+    }
+}
+
+/// "Just shelved": the newest arrival, with the librarian ant carrying its poster onto the shelf.
+private struct Spotlight: View {
+    let entry: LibraryEntry
+    let shelfMates: [LibraryEntry]
+    let open: () -> Void
+    let play: () -> Void
+    @State private var info = TitleInfo.shared
+    @State private var log = WatchLog.shared
+
+    var body: some View {
+        let d = info.details[entry.posterKey]
+        HStack(spacing: 0) {
+            ShelvingScene(entry: entry, mates: shelfMates)
+                .frame(width: 300)
+            VStack(alignment: .leading, spacing: 9) {
+                Text(entry.title).font(Theme.display(32)).lineLimit(1)
+                HStack(spacing: 7) {
+                    if let sc = d?.score {
+                        Text(sc).font(Theme.body(12, .heavy)).foregroundStyle(Theme.soil)
+                            .padding(.horizontal, 10).frame(height: 26)
+                            .background(Capsule().fill(Theme.text))
+                            .help(d?.scoreFrom ?? "")
+                    }
+                    if let y = entry.year { tag(String(y)) }
+                    if entry.isShow { tag("Season \(entry.season ?? 1) · \(entry.episodes.count) episodes") }
+                    if let a = d?.about { Text(a).font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1) }
+                }
+                Text(d.map { $0.synopsis.isEmpty ? "No summary found yet." : $0.synopsis } ?? "Looking up what it's about…")
+                    .font(Theme.body(14)).foregroundStyle(Theme.muted).lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                HStack(spacing: 10) {
+                    Button(entry.isShow ? "Play" : (log.resumeAt(entry.url.lastPathComponent) != nil ? "Resume" : "Play"), action: play)
+                        .buttonStyle(RedButtonStyle())
+                    Button("Details", action: open).buttonStyle(GhostButtonStyle())
+                    StarPicker(key: entry.posterKey)
+                }
+            }
+            .padding(.horizontal, 22).padding(.vertical, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 236)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func tag(_ t: String) -> some View {
+        Text(t).font(Theme.body(12, .semibold)).padding(.horizontal, 9).frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Theme.surface2))
+    }
+}
+
+/// The librarian ant walks the newest poster over and lifts it onto the shelf (8 s, twice,
+/// then rests; hover to watch again). Drawn in one Canvas so it stays smooth.
+private struct ShelvingScene: View {
+    let entry: LibraryEntry
+    let mates: [LibraryEntry]
+    @State private var start = Date()
+    @State private var playing = true
+    @State private var store = LibraryStore.shared
+    @Environment(\.accessibilityReduceMotion) private var reduce
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: nil, paused: !playing || reduce)) { tl in
+            Canvas { ctx, size in draw(&ctx, size, tl.date) }
+        }
+        .background(Theme.soil.opacity(0.55))
+        .overlay(alignment: .topLeading) {
+            Text("JUST SHELVED").font(Theme.body(11, .bold)).tracking(1.4).foregroundStyle(Theme.librarianAnt).padding(14)
+        }
+        .onHover { h in if h && !playing { replay() } }
+        .onAppear { replay() }
+        .onChange(of: entry.id) { _, _ in replay() }
+    }
+
+    private func replay() {
+        start = Date(); playing = true
+        Task { try? await Task.sleep(for: .seconds(16)); if Date().timeIntervalSince(start) >= 15.9 { playing = false } }
+    }
+
+    private func ease(_ t: Double) -> Double { t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2 }
+    private func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double { a + (b - a) * t }
+
+    private func poster(_ ctx: inout GraphicsContext, _ e: LibraryEntry?, _ r: CGRect, alpha: Double = 1) {
+        var g = ctx
+        g.opacity = alpha
+        let clip = Path(roundedRect: r, cornerRadius: 3)
+        g.clip(to: clip)
+        if let e, let u = store.posters[e.posterKey], let img = PosterCache.image(u) {
+            g.draw(Image(nsImage: img).resizable(), in: r)
+        } else {
+            g.fill(clip, with: .color(Theme.surface2))
+        }
+    }
+
+    private func draw(_ ctx: inout GraphicsContext, _ size: CGSize, _ now: Date) {
+        let floorY: CGFloat = 170
+        let shelfY: CGFloat = 108
+        // Shelf on the wall, with the last two arrivals already on it.
+        ctx.fill(Path(roundedRect: CGRect(x: 168, y: shelfY, width: 118, height: 7), cornerRadius: 3), with: .color(Theme.track))
+        for (i, m) in mates.prefix(2).enumerated() {
+            poster(&ctx, m, CGRect(x: 234 + CGFloat(i) * 28, y: shelfY - 36, width: 24, height: 36))
+        }
+        ctx.fill(Path(CGRect(x: 0, y: floorY, width: size.width, height: 3)), with: .color(Theme.track))
+
+        let u = (playing && !reduce) ? (now.timeIntervalSince(start) / 8).truncatingRemainder(dividingBy: 1) : 0.6
+        // Ant: walks in, stops under the shelf, turns, walks home.
+        let antX: Double
+        if u < 0.4 { antX = lerp(28, 150, ease(u / 0.4)) }
+        else if u < 0.58 { antX = 150 }
+        else if u < 0.92 { antX = lerp(150, 28, ease((u - 0.58) / 0.34)) }
+        else { antX = 28 }
+        let facing: Double
+        if u < 0.555 { facing = 1 }
+        else if u < 0.575 { facing = 1 - 2 * (u - 0.555) / 0.02 }
+        else if u < 0.94 { facing = -1 }
+        else if u < 0.96 { facing = -1 + 2 * (u - 0.94) / 0.02 }
+        else { facing = 1 }
+        let walking = playing && !reduce && (u < 0.4 || (u > 0.58 && u < 0.92))
+        var g = ctx
+        g.scaleBy(x: 2, y: 2)
+        RelayAnt.draw(&g, x: antX / 2, base: floorY / 2, color: Theme.librarianAnt, facing: abs(facing) < 0.05 ? 0.05 : facing,
+                      alpha: 1, legs: walking ? now.timeIntervalSinceReferenceDate : nil)
+
+        // The poster: on the ant's back, then up in an arc onto the shelf.
+        let back = RelayAnt.back(x: antX / 2, base: floorY / 2, facing: 1)
+        let carry = CGRect(x: back.x * 2 - 9, y: back.y * 2 - 22, width: 18, height: 27)
+        let slot = CGRect(x: 204, y: shelfY - 36, width: 24, height: 36)
+        var r = carry
+        var alpha = 1.0
+        if u < 0.4 {
+            alpha = min(1, u / 0.03)
+        } else if u < 0.55 {
+            let k = ease((u - 0.4) / 0.15)
+            let lift = sin(Double.pi * k) * 40
+            r = CGRect(x: lerp(carry.minX, slot.minX, k), y: lerp(carry.minY, slot.minY, k) - lift,
+                       width: lerp(carry.width, slot.width, k), height: lerp(carry.height, slot.height, k))
+        } else {
+            r = slot
+            alpha = u > 0.94 && playing ? max(0, 1 - (u - 0.94) / 0.05) : 1
+        }
+        poster(&ctx, entry, r, alpha: alpha)
+        // A soft ring where it lands.
+        if u > 0.53 && u < 0.66 && playing {
+            let k = (u - 0.53) / 0.13
+            let ring = slot.insetBy(dx: -6 - 10 * k, dy: -6 - 10 * k)
+            ctx.stroke(Path(roundedRect: ring, cornerRadius: 6), with: .color(Theme.librarianAnt.opacity(1 - k)), lineWidth: 2)
+        }
     }
 }
 
@@ -428,9 +700,11 @@ struct PosterImage: View {
 
 private struct PosterCard: View {
     let entry: LibraryEntry
+    var order: Int = 0
     let action: () -> Void
     let play: () -> Void
     @State private var hover = false
+    @State private var shown = false
     @State private var log = WatchLog.shared
     @State private var info = TitleInfo.shared
 
@@ -465,6 +739,7 @@ private struct PosterCard: View {
                     Color.black.opacity(0.35)
                     Image(systemName: "play.fill")
                         .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(Theme.onAccent)
                         .frame(width: 56, height: 56)
                         .background(Circle().fill(Theme.redFill))
                         .contentShape(Circle())
@@ -479,8 +754,9 @@ private struct PosterCard: View {
             .overlay(alignment: .topLeading) { ScoreBadge(entry: entry) }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(hover ? Theme.red : Theme.line, lineWidth: hover ? 2 : 1))
-            .scaleEffect(hover ? 1.03 : 1)
-            .animation(.easeOut(duration: 0.15), value: hover)
+            .scaleEffect(hover ? 1.045 : 1)
+            .offset(y: hover ? -7 : 0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.72), value: hover)
             Text(entry.title).font(Theme.body(14, .semibold)).lineLimit(1)
             HStack(spacing: 6) {
                 Text(subtitle).font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
@@ -491,6 +767,11 @@ private struct PosterCard: View {
         .onHover { hover = $0 }
         .onTapGesture(perform: action)
         .help(info.details[entry.posterKey]?.synopsis.nilIfEmpty ?? (entry.isShow ? "Show episodes" : "What it's about"))
+        .opacity(shown ? 1 : 0)
+        .offset(y: shown ? 0 : 16)
+        .onAppear {
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.82).delay(Double(min(order, 24)) * 0.035)) { shown = true }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }
@@ -523,6 +804,7 @@ private struct ContinueCard: View {
             }
             .frame(width: 170, alignment: .leading)
             Image(systemName: "play.fill").font(.system(size: 13, weight: .bold))
+                .foregroundStyle(hover ? Theme.onAccent : Theme.text)
                 .frame(width: 34, height: 34)
                 .background(Circle().fill(hover ? Theme.redFill : Theme.surface2))
         }
@@ -605,6 +887,7 @@ private struct EpisodeLine: View {
                  : log.resumeAt(file.lastPathComponent) != nil ? "\(log.minutesLeft(file.lastPathComponent) ?? 0) min left" : "")
                 .font(Theme.body(12)).foregroundStyle(Theme.muted)
             Image(systemName: "play.fill").font(.system(size: 11, weight: .bold))
+                .foregroundStyle(hover ? Theme.onAccent : Theme.text)
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(hover ? Theme.redFill : Theme.surface2))
         }
@@ -658,5 +941,17 @@ extension LibraryStore {
             }
         }
         return nil
+    }
+}
+
+/// Poster images read once and kept, for views that redraw every frame.
+@MainActor
+enum PosterCache {
+    private static var images: [URL: NSImage] = [:]
+    static func image(_ u: URL) -> NSImage? {
+        if let i = images[u] { return i }
+        guard let i = NSImage(contentsOf: u) else { return nil }
+        images[u] = i
+        return i
     }
 }

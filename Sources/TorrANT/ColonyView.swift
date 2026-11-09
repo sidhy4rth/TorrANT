@@ -9,7 +9,6 @@ struct ColonyView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
             HStack(spacing: 0) {
                 main
                 sidebar
@@ -35,8 +34,8 @@ struct ColonyView: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            Text("Downloads").font(Theme.display(24))
-            Text("No crumb too big.").font(Theme.body(14)).foregroundStyle(Theme.muted)
+            Text("Lines").font(Theme.display(24))
+            Text("From link to Library, one ant at a time.").font(Theme.body(14)).foregroundStyle(Theme.muted)
             Spacer()
         }
         .padding(.horizontal, 22)
@@ -48,42 +47,61 @@ struct ColonyView: View {
     // MARK: Main column
 
     private var main: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let lines = RelayBoard.lines()
+        return VStack(alignment: .leading, spacing: 16) {
             addBar
             if let s = colony.spotted { SpottedBanner(link: s) }
-            HStack(spacing: 14) {
-                odoStat("Coming home", color: Theme.red) { Fmt.odoSpeed(Colony.shared.liveDown($0)) }
-                odoStat("Sharing with other colonies", color: Theme.text) { Fmt.odoSpeed(Colony.shared.liveUp($0)) }
+            HStack(spacing: 12) {
+                odoStat("Red ants bringing", color: Theme.carrierAnt) { Fmt.odoSpeed(Colony.shared.liveDown($0)) }
+                odoStat("Amber ants flying", color: Theme.flyerAnt) { _ in Fmt.odoSpeed(Uploader.shared.jobs.reduce(0) { $0 + $1.speed }) }
                 Card {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Carried home this session").font(Theme.body(14)).foregroundStyle(Theme.muted)
-                        LiveLabel(live: colony.anythingMoving, font: LiveFont.display(38), color: Theme.text) {
+                        Text("Carried home this session").font(Theme.body(13)).foregroundStyle(Theme.muted)
+                        LiveLabel(live: colony.anythingMoving, font: LiveFont.display(30), color: Theme.text) {
                             Fmt.liveSize(Colony.shared.liveSession($0))
                         }
-                        .frame(height: 46)
+                        .frame(height: 38)
                     }
                 }
+                nightCard
             }
             HStack(alignment: .firstTextBaseline) {
-                Text("On the trail").font(Theme.display(22))
+                Text("Lines").font(Theme.display(22))
+                Text(lines.isEmpty ? "nothing on its way" : "\(lines.count) on the way")
+                    .font(Theme.body(13)).foregroundStyle(Theme.muted)
                 Spacer()
-                legend(Theme.swarm, "Swarm = torrent")
-                legend(Theme.crumb, "Crumb = normal link")
             }
-            if colony.trail.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(colony.trail) { c in TrailRow(c: c) }
-                    }
-                    .padding(.bottom, 12)
+            if lines.isEmpty {
+                VStack(spacing: 6) {
+                    RelayLanes(lines: [RelayLine(id: "idle", title: "All quiet", leg: .idle, progress: { _ in 0 },
+                                                 detail: { _ in "paste a link above to start a line" }, busy: false)])
+                        .frame(height: 112)
+                    Text("The crew is resting. Paste a link or magnet, drop a .torrent anywhere,\nor copy a download link and the ants will notice.")
+                        .font(Theme.body(14)).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
                 }
-                .scrollIndicators(.never)
+                Spacer(minLength: 0)
+            } else {
+                RelayLanes(lines: lines)
             }
         }
         .padding(22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    /// When the night ants wake, how many crumbs they hold, and whether the phone is paired.
+    private var nightCard: some View {
+        let night = NightShift.shared
+        let phone = PhoneLink.shared
+        return Card {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Night shift").font(Theme.body(13)).foregroundStyle(Theme.muted)
+                Text(night.on ? (night.running ? "Running" : night.nextStart().formatted(date: .omitted, time: .shortened)) : "Off")
+                    .font(Theme.display(24)).foregroundStyle(Theme.nightAnt)
+                Text("\(night.waiting.count) waiting · phone \(phone.pairedName.isEmpty ? "not paired" : "paired")")
+                    .font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
+            }
+        }
     }
 
     private var addBar: some View {
@@ -376,7 +394,8 @@ struct HillRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Circle().fill(item.kind == .swarm ? Theme.swarm : Theme.crumb).frame(width: 10, height: 10)
-            Text(item.name).font(Theme.body(14, .medium)).lineLimit(1).truncationMode(.middle)
+            Text(Titles.pretty(item.name)).font(Theme.body(14, .medium)).lineLimit(1).truncationMode(.tail)
+                .help(item.name)
             Spacer(minLength: 4)
             driveBadge
             Text(Fmt.when(item.date)).font(Theme.body(12)).foregroundStyle(Theme.muted)

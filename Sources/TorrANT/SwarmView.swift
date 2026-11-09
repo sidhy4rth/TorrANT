@@ -149,7 +149,7 @@ struct SwarmView: View {
         return Button {
             Task { await colony.watchEarly(c, f) }
         } label: {
-            Text(label).font(Theme.body(12, .semibold)).foregroundStyle(.white)
+            Text(label).font(Theme.body(12, .semibold)).foregroundStyle(Theme.onAccent)
                 .padding(.horizontal, 12).frame(height: 28)
                 .background(Capsule().fill(Theme.redFill))
         }
@@ -172,7 +172,7 @@ struct SwarmView: View {
     private func seg(_ t: String, on: Bool, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(t).font(Theme.body(12, .semibold))
-                .foregroundStyle(on ? Color.white : Theme.muted)
+                .foregroundStyle(on ? Theme.onAccent : Theme.muted)
                 .padding(.horizontal, 12).frame(height: 28)
                 .background(Capsule().fill(on ? Theme.redFill : .clear))
         }
@@ -347,7 +347,7 @@ struct SendSheet: View {
     private func whenButton(_ title: String, _ value: Bool) -> some View {
         Button { startNow = value } label: {
             Text(title).font(Theme.body(13, .semibold))
-                .foregroundStyle(startNow == value ? Color.white : Theme.muted)
+                .foregroundStyle(startNow == value ? Theme.onAccent : Theme.muted)
                 .padding(.horizontal, 14).frame(height: 32)
                 .background(Capsule().fill(startNow == value ? Theme.redFill : .clear))
         }
