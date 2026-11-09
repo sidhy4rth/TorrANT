@@ -232,6 +232,9 @@ port opened on your Mac), and the bot's token sits in a private file only your a
   the message starts it straight away, unless the Mac is on a hotspot.
 - **Buttons, not commands.** A button bar sits under the chat (📊 Status · 🌙 Queue · ⏸ Pause all ·
   ▶️ Resume all), queued links get ▶️ / ❌ buttons, and the queue lists every item with its own.
+- **⚡ Instant or 🌙 Night.** One button switches modes: in Instant mode every shared link starts
+  downloading the moment it arrives; in Night mode it waits for the night shift. "now" or "tonight"
+  in a message overrides the mode for that link.
 - **A live view.** 📊 Status sends one message and keeps editing it every few seconds: a bar,
   percentage, speed and time left for each download, unpack and upload, until it says ✅ All done.
 - **News from home.** The night shift says when it starts and when it pauses leftovers; finished

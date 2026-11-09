@@ -142,13 +142,23 @@ final class PhoneLink {
             ["command": "queue", "description": "Tonight's night shift"],
             ["command": "pause", "description": "Let all the ants rest"],
             ["command": "resume", "description": "Wake all the ants"],
+            ["command": "instant", "description": "Start links right away (⚡ Instant mode)"],
+            ["command": "night", "description": "Queue links for the night shift (🌙 Night mode)"],
             ["command": "help", "description": "How to use this bot"]]])
     }
 
     /// Big buttons that sit under the chat box.
     private var keyboard: [String: Any] {
-        ["keyboard": [[["text": "📊 Status"], ["text": "🌙 Queue"]], [["text": "⏸ Pause all"], ["text": "▶️ Resume all"]]],
+        ["keyboard": [[["text": "📊 Status"], ["text": "🌙 Queue"]],
+                      [["text": "⏸ Pause all"], ["text": "▶️ Resume all"]],
+                      [["text": instant ? "⚡ Instant mode · on" : "🌙 Night mode · on"]]],
          "resize_keyboard": true, "is_persistent": true]
+    }
+
+    /// ⚡ Instant mode: shared links start downloading right away instead of waiting for the night shift.
+    private var instant: Bool {
+        get { UserDefaults.standard.bool(forKey: "phoneInstant") }
+        set { UserDefaults.standard.set(newValue, forKey: "phoneInstant") }
     }
 
     nonisolated(unsafe) static let noButtons: [String: Any] = ["inline_keyboard": [[[String: Any]]]()]
@@ -174,7 +184,7 @@ final class PhoneLink {
                 state = .paired
                 Colony.shared.say("Phone paired: \(from) on Telegram")
                 await api(token, "sendMessage", ["chat_id": chatID, "reply_markup": keyboard, "text":
-                    "🐜 Paired with TorrANT on your Mac!\n\nShare any link here and the ants carry it on tonight's night shift. Add \"now\" to start straight away.\n\nThe buttons below show what's happening, live."])
+                    "🐜 Paired with TorrANT on your Mac!\n\nShare any link here and the ants carry it on tonight's night shift. Add \"now\" to start straight away, or tap ⚡ for Instant mode.\n\nThe buttons below show what's happening, live."])
             } else {
                 await api(token, "sendMessage", ["chat_id": chat, "text": "This bot belongs to someone's TorrANT. To pair, send /pair followed by the code shown in TorrANT's Settings."])
             }
@@ -184,9 +194,18 @@ final class PhoneLink {
 
         // "📊 Status", "/status" and "status" all mean the same thing.
         let word = String(t.lowercased().unicodeScalars.filter { CharacterSet.letters.contains($0) || $0 == " " })
-            .trimmingCharacters(in: .whitespaces)
+            .split(separator: " ").joined(separator: " ")   // "🌙 Night mode · on" → "night mode on"
         switch word {
         case "status": await startLive(token); return
+        // The mode button shows the current mode, so tapping it switches to the other one.
+        case "instant", "night mode on", "instant mode", "night instant":
+            instant = true
+            await reply(token, "⚡ Instant mode on\nLinks you share start downloading right away → \(Uploader.shared.straightToDrive ? "☁️ Google Drive" : "💻 the Mac").\nAdd \"tonight\" to a link to queue it for the night shift instead.\(NetWatch.shared.metered ? "\n📵 The Mac is on a hotspot right now, so downloads wait for Wi-Fi." : "")")
+            return
+        case "night", "instant mode on", "night mode":
+            instant = false
+            await reply(token, "🌙 Night mode on\nLinks you share wait for the night shift (\(NightShift.clock(NightShift.shared.start))–\(NightShift.clock(NightShift.shared.end))).\nAdd \"now\" to a link to start it straight away.")
+            return
         case "queue": await sendQueue(token); return
         case "pause", "pause all":
             await Colony.shared.restAll()
@@ -200,6 +219,7 @@ final class PhoneLink {
             🐜 How it works
             • Share or paste links: files, pages full of downloads, or magnets.
             • They wait for the night shift (\(NightShift.clock(NightShift.shared.start))–\(NightShift.clock(NightShift.shared.end))). Add "now" to start straight away.
+            • ⚡ Instant mode (button at the bottom): links start downloading the moment you share them. Tap again for 🌙 Night mode.
             • 📊 Status: a live view that updates itself.
             • 🌙 Queue: tonight's list, with buttons to start or remove things.
             • When a movie reaches your Library you get its poster here.
@@ -207,7 +227,9 @@ final class PhoneLink {
         default: break
         }
 
-        let now = t.lowercased().split(whereSeparator: { !$0.isLetter }).contains("now")
+        // ⚡ Instant mode starts everything now; "now" / "tonight" in the message override the mode.
+        let words = Set(t.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+        let now = words.contains("now") || (instant && !words.contains("tonight") && !words.contains("later"))
         let r = await LinkGrabber.grab(t)
         guard !r.found.isEmpty else {
             await reply(token, r.failed.isEmpty ? "🤔 No download links in that. Send a link to a file, a page with downloads, or a magnet."
