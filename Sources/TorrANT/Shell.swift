@@ -120,8 +120,20 @@ private struct TopBar: View {
             Spacer(minLength: 8)
             HStack(spacing: 7) {
                 Circle().fill(colony.online ? Theme.safe : Theme.swarm).frame(width: 7, height: 7)
-                Text(colony.online ? "\(colony.antsOut) ants out" : (colony.problem ?? "Waking the colony…"))
-                    .font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
+                if colony.online && (colony.anythingMoving || !up.jobs.isEmpty) {
+                    // Live speeds while anything moves: down in the carrier's colour, up in the flyer's.
+                    LiveLabel(live: true, font: LiveFont.body(12, 700), color: Theme.carrierAnt, align: .right) {
+                        "↓ " + Fmt.liveSpeed(Colony.shared.liveDown($0))
+                    }
+                    .frame(width: 92, height: 16)
+                    if !up.jobs.isEmpty {
+                        Text("↑ " + Fmt.liveSpeed(up.jobs.reduce(0) { $0 + $1.speed }))
+                            .font(Theme.body(12, .bold)).foregroundStyle(Theme.flyerAnt).lineLimit(1)
+                    }
+                } else {
+                    Text(colony.online ? "\(colony.antsOut) ants out" : (colony.problem ?? "Waking the colony…"))
+                        .font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
+                }
             }
             DriveModeSwitch()
             Button { go(.settings) } label: {
