@@ -20,6 +20,7 @@ final class NetWatch {
                     Colony.shared.say(m ? "On a hotspot or Low Data Mode: night shift and preloading wait for Wi-Fi"
                                         : "Back on regular Wi-Fi")
                     if !m { Streamer.shared.warmUp() }
+                    Speed.shared.apply()   // hotspot limit on or off
                 }
             }
         }

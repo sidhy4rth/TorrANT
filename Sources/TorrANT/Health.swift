@@ -19,6 +19,9 @@ enum Health {
         return nil
     }
 
+    /// From aria2's "infoHash" (40 hex characters).
+    static func hash(hex: String) -> Data? { hex.count == 40 ? hexData(hex.lowercased()) : nil }
+
     /// From a .torrent file: SHA-1 of the bencoded "info" dictionary, byte for byte.
     static func hash(torrent d: Data) -> Data? {
         let b = [UInt8](d)

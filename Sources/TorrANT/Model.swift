@@ -30,6 +30,10 @@ struct Crumb: Identifiable, Hashable {
     let files: [CrumbFile]
     let dir: String
     let errorMessage: String?
+    let infoHash: String?
+    /// Which pieces have arrived (hex, first piece = highest bit) and how big a piece is.
+    let bitfield: String?
+    let pieceLength: Int64
     let isMetadata: Bool
     let followedBy: [String]
     let source: String?
@@ -105,6 +109,9 @@ struct Crumb: Identifiable, Hashable {
         followedBy = d["followedBy"] as? [String] ?? []
         let err = s("errorMessage")
         errorMessage = err.isEmpty ? nil : err
+        infoHash = d["infoHash"] as? String
+        bitfield = d["bitfield"] as? String
+        pieceLength = i("pieceLength")
 
         switch s("status") {
         case "active": state = (s("seeder") == "true" && kind == .swarm) ? .seeding : .active
@@ -116,6 +123,29 @@ struct Crumb: Identifiable, Hashable {
         }
     }
 
+    /// How much of a file has arrived unbroken from its start: the part a player can use.
+    func readyFromStart(_ f: CrumbFile) -> Int64 {
+        if f.done >= f.length { return f.length }
+        guard let bits = bitfield.map(Array.init), pieceLength > 0 else { return 0 }
+        let offset = files.filter { $0.index < f.index }.reduce(Int64(0)) { $0 + $1.length }
+        var piece = Int(offset / pieceLength)
+        while has(piece, bits) { piece += 1 }
+        return max(0, min(f.length, Int64(piece) * pieceLength - offset))
+    }
+
+    /// Whether the last piece of a file is in (players read a video's index from its end).
+    func hasEnd(_ f: CrumbFile) -> Bool {
+        if f.done >= f.length { return true }
+        guard let bits = bitfield.map(Array.init), pieceLength > 0 else { return false }
+        let offset = files.filter { $0.index < f.index }.reduce(Int64(0)) { $0 + $1.length }
+        return has(Int((offset + f.length - 1) / pieceLength), bits)
+    }
+
+    private func has(_ piece: Int, _ hex: [Character]) -> Bool {
+        guard piece >= 0, piece / 4 < hex.count, let v = hex[piece / 4].hexDigitValue else { return false }
+        return v & (8 >> (piece % 4)) != 0
+    }
+
     private static func magnetName(_ metaPath: String) -> String? {
         // aria2 shows "[METADATA]<name or hash>"
         let n = metaPath.replacingOccurrences(of: "[METADATA]", with: "")
@@ -124,7 +154,8 @@ struct Crumb: Identifiable, Hashable {
 
     static let rpcKeys = ["gid", "status", "totalLength", "completedLength", "uploadLength",
                           "downloadSpeed", "uploadSpeed", "connections", "numSeeders", "seeder",
-                          "files", "bittorrent", "dir", "errorMessage", "followedBy"]
+                          "files", "bittorrent", "dir", "errorMessage", "followedBy", "infoHash",
+                          "bitfield", "pieceLength"]
 }
 
 /// Something the ants brought home (kept across launches).

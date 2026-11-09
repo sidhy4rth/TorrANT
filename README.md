@@ -154,6 +154,23 @@ qBittorrent behave:
   phone hotspots and some ISP routers keep it closed.
 - **IPv6.** When the Mac has a public IPv6 address (common on Indian mobile and fibre networks),
   TorrANT joins the IPv6 DHT too, where there's usually no router in the way at all.
+- **A health check first.** Before anything starts, TorrANT asks the trackers how many people
+  have the whole file (a few bytes, without joining), and the Link Grabber and the bot show it:
+  🌱 fast, 🌿 OK, 🐢 slow, 💤 nobody.
+- **Rescue for stuck downloads.** A torrent that hasn't moved for 3 minutes is handed the full
+  public tracker list (hundreds of trackers) and asks again. Still stuck 5 minutes later, TorrANT
+  checks its health and tells you why, on the Mac and on your phone.
+- **Secret tunnels only (optional).** Settings can refuse anyone who won't encrypt, which hides
+  torrent traffic from simple ISP throttling at the cost of fewer people.
+
+## Space, speed and quiet hours
+
+- **Free-space check.** A download that won't fit (with 1 GB kept spare) is paused before it fills
+  the disk, with a note saying how much it needs. Straight-to-Drive downloads still pass through
+  the Mac, so this matters even when the Mac stays empty.
+- **Speed limits.** Caps for download and upload, a gentler cap on hotspots and Low Data Mode
+  networks (1 MB/s by default), and quiet hours (7–11 PM by default) when downloads slow to
+  500 KB/s so calls and games aren't squeezed. The strictest rule that applies wins.
 
 ---
 
@@ -220,7 +237,20 @@ read-only Google sign-in, so VLC fetches only the part being watched.
   fetched ahead, so ▶ starts in about 2 s instead of 4–10. Kept in a cache capped at 1 GB and
   cleared after a day; watched parts aren't kept.
 - **Resume.** TorrANT reads VLC's position every few seconds and starts there next time, a few
-  seconds early. Seasons play as a playlist from the episode you're on.
+  seconds early. Seasons play as a playlist from the episode you're on, and an episode opened on
+  its own carries on into the next one. Sample clips are skipped.
+- **Subtitles.** A `.srt`, `.ass` or `.vtt` that came with the video (beside it, or in a `Subs`
+  folder, the way most releases pack them) is switched on automatically, English first and
+  "forced" tracks last. For films without any, VLC's own VLsub (View → VLsub) searches
+  OpenSubtitles.
+- **Watch while it downloads.** ▶ Watch now beside a video in a torrent tells the ants to fetch
+  its opening and its ending first, starts VLC once about 2% is in, then keeps moving the
+  "fetch first" window ahead of you. Torrents arrive in scattered pieces, so a jump far ahead can
+  pause until the ants catch up, and each window move restarts the torrent for a few seconds.
+- **On the TV and your phone.** One switch in Settings shares the Library on home Wi-Fi as a
+  media server (DLNA). Smart TVs list it in their media app and VLC on a phone finds it under
+  Local network. It streams straight from Drive and is read-only, but anyone on that Wi-Fi can
+  browse it, so it's off until you turn it on.
 - **Library.** Posters come from Wikipedia (films) and TVmaze (shows), both free and without an
   account. Titles are cleaned from file names: `Moana.2026.1080p…mkv` becomes *Moana (2026)*.
 
@@ -373,7 +403,7 @@ The full design has ten screens; these are the ones still to build.
 | Screen | What it adds |
 |---|---|
 | **Taste Test** | Checks what came home before it's opened: safe or poison |
-| **Step Aside** | Smart bandwidth: slow down when you're on a call (the night shift and hotspot pause are done) |
+| **Step Aside** | Smart bandwidth: slow down when you're on a call (the night shift, hotspot pause, speed limits and quiet hours are done) |
 | **Colony Report** | A weekly report of what the ants carried, with badges |
 | **Extra Crews** | Mirrors: pull one file from several places at once |
 | **Already in the Anthill** | Spots a download you already have before fetching it again |

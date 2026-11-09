@@ -101,6 +101,10 @@ final class Aria2: @unchecked Sendable {
             "--summary-interval=0",
             "--quiet=true",
         ]
+        // Encryption-only (Settings): for internet providers that slow down plain torrent traffic.
+        if UserDefaults.standard.bool(forKey: "btRequireCrypto") {
+            args += ["--bt-require-crypto=true", "--bt-min-crypto-level=arc4"]
+        }
         // IPv6 peers and DHT when the Mac has a public IPv6 address (common on Jio and Airtel).
         if let v6 = SwarmTuning.globalIPv6() {
             args += ["--enable-dht6=true", "--dht-listen-addr6=\(v6)", "--dht-file-path6=\(support.appendingPathComponent("dht6.dat").path)"]

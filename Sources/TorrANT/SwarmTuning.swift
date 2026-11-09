@@ -52,6 +52,21 @@ enum SwarmTuning {
         return list
     }
 
+    /// The big list (100+ trackers) for rescuing a stuck torrent; fetched on demand, kept a day.
+    static func allTrackers(_ support: URL) async -> [String] {
+        let f = support.appendingPathComponent("trackers-all.txt")
+        if let age = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+           Date().timeIntervalSince(age) < 86_400,
+           let cached = try? String(contentsOf: f, encoding: .utf8), clean(cached).count > 20 { return clean(cached) }
+        if let url = URL(string: "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt"),
+           let (d, r) = try? await URLSession.shared.data(from: url), (r as? HTTPURLResponse)?.statusCode == 200,
+           let text = String(data: d, encoding: .utf8), clean(text).count > 20 {
+            try? clean(text).joined(separator: "\n").write(to: f, atomically: true, encoding: .utf8)
+            return clean(text)
+        }
+        return trackers(support)
+    }
+
     /// aria2 speaks UDP and HTTP(S) trackers only.
     private static func clean(_ text: String) -> [String] {
         var seen = Set<String>()

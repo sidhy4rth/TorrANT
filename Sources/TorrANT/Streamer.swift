@@ -124,8 +124,23 @@ final class Streamer {
     // MARK: Playing
 
     /// Plays a file: from disk if it's all here, otherwise streamed. Resumes where you left off.
-    func play(_ file: URL) async {
+    /// An episode carries on into the next ones in its folder, like a season.
+    /// `alone`: just this file (a half-downloaded torrent's neighbours aren't playable yet).
+    func play(_ file: URL, alone: Bool = false) async {
+        if !alone, Streamer.looksLikeEpisode(file.lastPathComponent) {
+            let folder = file.deletingLastPathComponent()
+            let eps = await Task.detached { Streamer.episodes(in: folder) }.value
+            if eps.count > 1, let same = eps.first(where: { $0.standardizedFileURL.path == file.standardizedFileURL.path }) {
+                await playSeason(folder, from: same)
+                return
+            }
+        }
         await playList([file], title: file.deletingPathExtension().lastPathComponent)
+    }
+
+    nonisolated static func looksLikeEpisode(_ name: String) -> Bool {
+        name.range(of: #"(?i)s\d{1,2}[ ._-]?e\d{1,3}|\b\d{1,2}x\d{2}\b|episode[ ._-]?\d+|\bep[ ._-]?\d+"#,
+                   options: .regularExpression) != nil
     }
 
     /// Builds a VLC playlist (stream links, or the file itself when it's on this Mac). The first
@@ -138,6 +153,12 @@ final class Streamer {
             guard let link else { return }
             if i == 0, let at = WatchLog.shared.resumeAt(e.lastPathComponent) {
                 lines.append("#EXTVLCOPT:start-time=\(Int(at))")
+            }
+            // Subtitles that came with it (beside it, or in a Subs folder), English first.
+            if let sub = await Task.detached(operation: { Streamer.subtitle(for: e) }).value,
+               let path = await localCopy(of: sub) {
+                lines.append("#EXTVLCOPT:sub-file=\(path)")
+                if i == 0 { Colony.shared.say("💬 Subtitles on: \(sub.lastPathComponent)") }
             }
             lines.append("#EXTINF:-1,\(e.deletingPathExtension().lastPathComponent)")
             lines.append(link.isFileURL ? link.path : link.absoluteString)
@@ -363,9 +384,64 @@ final class Streamer {
 
     nonisolated static func isVideo(_ url: URL) -> Bool { videoKinds.contains(url.pathExtension.lowercased()) }
 
+    // MARK: Subtitles
+
+    nonisolated static let subKinds: Set<String> = ["srt", "ass", "ssa", "vtt"]
+
+    /// The best subtitle file shipped with a video: named like it, or the only video in its
+    /// folder; looks beside it and in Subs/, Subs/<episode>/, Subtitles/. English, not "forced", wins.
+    nonisolated static func subtitle(for video: URL) -> URL? {
+        let fm = FileManager.default
+        let dir = video.deletingLastPathComponent()
+        let stem = video.deletingPathExtension().lastPathComponent
+        func list(_ d: URL) -> [URL] {
+            (try? fm.contentsOfDirectory(at: d, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        }
+        let only = list(dir).filter(isVideo).count == 1
+        func subs(_ d: URL, anyName: Bool) -> [URL] {
+            list(d).filter { subKinds.contains($0.pathExtension.lowercased()) &&
+                (anyName || $0.lastPathComponent.lowercased().hasPrefix(stem.lowercased())) }
+        }
+        var found = subs(dir, anyName: only)
+        for name in ["Subs", "Subtitles"] {
+            let d = dir.appendingPathComponent(name)
+            found += subs(d.appendingPathComponent(stem), anyName: true)
+            found += subs(d, anyName: only)
+        }
+        func score(_ u: URL) -> Int {
+            let n = u.deletingPathExtension().lastPathComponent.lowercased()
+            var s = 0
+            if n.range(of: #"(^|[^a-z])(en|eng|english)([^a-z]|$)"#, options: .regularExpression) != nil { s += 2 }
+            if n.contains("forced") { s -= 3 }
+            if u.pathExtension.lowercased() == "srt" { s += 1 }
+            return s
+        }
+        return found.max { score($0) < score($1) }
+    }
+
+    /// VLC wants subtitles as a file on disk: streamed ones are fetched (a few KB) into the cache.
+    private func localCopy(of sub: URL) async -> String? {
+        if Streamer.isOnMac(sub) { return sub.path }
+        guard let rel = Streamer.pathInDrive(sub), await startServer() else { return nil }
+        let p = rel.split(separator: "/").map {
+            String($0).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#"))) ?? String($0)
+        }.joined(separator: "/")
+        guard let url = URL(string: "http://127.0.0.1:\(port)/\(p)") else { return nil }
+        var req = URLRequest(url: url, timeoutInterval: 20)
+        req.setValue("Basic " + Data("\(user):\(pass)".utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200, data.count < 5_000_000 else { return nil }
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TorrANT/subtitles")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let out = dir.appendingPathComponent(sub.lastPathComponent)
+        guard (try? data.write(to: out)) != nil else { return nil }
+        return out.path
+    }
+
     nonisolated static func episodes(in folder: URL) -> [URL] {
         guard let e = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return [] }
         return e.compactMap { $0 as? URL }.filter(isVideo)
+            .filter { !$0.pathComponents.suffix(2).contains { $0.lowercased().hasPrefix("sample") } }  // skip sample clips
             .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
     }
 }

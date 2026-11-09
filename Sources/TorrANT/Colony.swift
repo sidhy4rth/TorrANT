@@ -51,6 +51,20 @@ final class Colony {
         return Colony.findDrive()?.appendingPathComponent(Uploader.folder, isDirectory: true)
     }
 
+    /// Only encrypted peer connections (fewer people, but harder for a provider to slow down).
+    var requireCrypto: Bool = UserDefaults.standard.bool(forKey: "btRequireCrypto") {
+        didSet {
+            UserDefaults.standard.set(requireCrypto, forKey: "btRequireCrypto")
+            let on = requireCrypto
+            Task {
+                try? await aria.call("aria2.changeGlobalOption", [["bt-require-crypto": on ? "true" : "false",
+                                                                     "bt-min-crypto-level": on ? "arc4" : "plain"]])
+            }
+            say(requireCrypto ? "Encrypted connections only, for new torrents (restart TorrANT to include ones already running)"
+                              : "Plain and encrypted connections, for new torrents")
+        }
+    }
+
     var watchClipboard: Bool {
         get { UserDefaults.standard.object(forKey: "watchClipboard") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "watchClipboard") }
@@ -205,6 +219,9 @@ final class Colony {
         let working = sorted.contains { $0.state == .active || $0.state == .waiting }
             || driveBusy || !carrying.isEmpty || !unpacking.isEmpty || !Uploader.shared.jobs.isEmpty
             || NightShift.shared.needsMacAwake
+        watchStalls(sorted)
+        followEarly(sorted)
+        checkSpace(sorted)
         if Awake.shared.update(working: working) {
             say(Awake.shared.holding ? "Keeping the Mac awake while the ants work" : "All quiet. The Mac can sleep again")
         }
@@ -613,6 +630,154 @@ final class Colony {
             if v.ubiquitousItemIsUploaded == false { return true }
         }
         return false
+    }
+
+    /// Overall limits for every download (Speed decides them); 0 = no limit.
+    func setSpeedLimits(down: Int, up: Int) {
+        Task {
+            try? await aria.call("aria2.changeGlobalOption", [["max-overall-download-limit": "\(down)",
+                                                                 "max-overall-upload-limit": "\(up)"]])
+        }
+    }
+
+    // MARK: Free space
+
+    @ObservationIgnored private var spaceWarned: Set<String> = []
+
+    /// Bytes free where downloads land (what macOS would let an app use).
+    var freeSpace: Int64 {
+        let v = try? downloadDir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return v?.volumeAvailableCapacityForImportantUsage ?? Int64.max
+    }
+
+    /// A download that won't fit (with 1 GB to spare) is paused before it fills the Mac.
+    private func checkSpace(_ list: [Crumb]) {
+        let free = freeSpace
+        for c in list where (c.state == .active || c.state == .waiting) && c.total > 0 && !spaceWarned.contains(c.gid) {
+            let need = c.total - c.done
+            guard need > free - 1_000_000_000 else { continue }
+            spaceWarned.insert(c.gid)
+            Task {
+                try? await aria.call("aria2.forcePause", [c.gid])
+                let msg = "💾 Not enough space for \(c.name): it needs \(Fmt.bytes(need)) more and the Mac has \(Fmt.bytes(max(0, free))) free. Paused it."
+                say(msg)
+                PhoneLink.shared.notify(msg + "\nFree some space, then tap ▶️ Resume all.")
+            }
+        }
+    }
+
+    // MARK: Rescuing stuck torrents
+
+    /// Per torrent: when it last moved, and how far we've gone to help it.
+    @ObservationIgnored private var stalls: [String: (since: Date, done: Int64, rescued: Bool, warned: Bool)] = [:]
+
+    /// Nothing for 3 minutes → ask the big tracker list for people (aria2 restarts the torrent
+    /// and announces again). Still nothing 5 minutes later → check its health and say why.
+    private func watchStalls(_ list: [Crumb]) {
+        let now = Date()
+        let live = list.filter { $0.kind == .swarm && $0.state == .active }
+        for c in live {
+            var s = stalls[c.gid] ?? (now, c.done, false, false)
+            if c.done > s.done || c.down > 0 {
+                s = (now, c.done, false, false)          // moving again: start over
+            } else {
+                let idle = now.timeIntervalSince(s.since)
+                if !s.rescued, idle > 180 {
+                    s.rescued = true
+                    Task { await rescue(c) }
+                } else if s.rescued, !s.warned, idle > 480 {
+                    s.warned = true
+                    Task { await warnStuck(c) }
+                }
+            }
+            stalls[c.gid] = s
+        }
+        let ids = Set(live.map(\.gid))
+        for k in stalls.keys where !ids.contains(k) { stalls[k] = nil }
+    }
+
+    private func rescue(_ c: Crumb) async {
+        guard !NetWatch.shared.metered else { return }
+        let list = await SwarmTuning.allTrackers(support)
+        do {
+            try await aria.call("aria2.changeOption", [c.gid, ["bt-tracker": list.joined(separator: ",")]])
+            say("🛟 \(c.name) was stuck, so the ants asked \(list.count) trackers for more people")
+            PhoneLink.shared.notify("🛟 \(c.name) was stuck for 3 minutes. Asking \(list.count) trackers for more people…")
+        } catch {
+            say("Couldn't rescue \(c.name): \(error.localizedDescription)")
+        }
+    }
+
+    private func warnStuck(_ c: Crumb) async {
+        var why = "nobody is sending it right now"
+        if let hex = c.infoHash, let h = Health.hash(hex: hex) {
+            why = Health.label(await Health.check(h, trackers: SwarmTuning.trackers(support)))
+        }
+        say("⚠️ \(c.name) is still stuck: \(why)")
+        PhoneLink.shared.notify("⚠️ \(c.name) is still stuck after 8 minutes.\n\(why)\nIt keeps trying; tap 🌙 Queue or ⏸ Pause all if you'd rather stop it.")
+    }
+
+    // MARK: Watching while it downloads
+
+    /// Torrents being watched early: which file, how far ahead the ants are told to fetch.
+    @ObservationIgnored private var early: [String: (file: Int, head: Int64, playing: Bool, moved: Date)] = [:]
+    /// gid → how close the chosen video is to playable (0…1), for the button.
+    var earlyPrep: [String: Double] = [:]
+
+    /// aria2 fetches torrent pieces rarest-first, never in order. So: tell it the start and end
+    /// of this video come first, start VLC once the opening has arrived, and keep pushing the
+    /// "first" window further ahead as it fills. Each push restarts the torrent for a moment.
+    func watchEarly(_ c: Crumb, _ f: CrumbFile) async {
+        if f.done >= f.length {
+            await Streamer.shared.play(URL(fileURLWithPath: f.path), alone: true)
+            return
+        }
+        if c.state == .paused { _ = try? await aria.call("aria2.unpause", [c.gid]) }
+        let picked = c.files.filter(\.selected).count
+        let head: Int64 = picked > 1 ? 150_000_000 : 300_000_000
+        early[c.gid] = (f.index, head, false, Date())
+        earlyPrep[c.gid] = 0
+        await prioritize(c.gid, head: head)
+        say("▶️ Getting \(f.name) ready to watch: the ants fetch its start first")
+    }
+
+    func stopEarly(_ gid: String) {
+        early[gid] = nil; earlyPrep[gid] = nil
+    }
+
+    private func prioritize(_ gid: String, head: Int64) async {
+        _ = try? await aria.call("aria2.changeOption", [gid, ["bt-prioritize-piece": "head=\(head / 1_000_000)M,tail=16M"]])
+    }
+
+    private func followEarly(_ list: [Crumb]) {
+        for (gid, e) in early {
+            guard let c = list.first(where: { $0.gid == gid }), c.state == .active || c.state == .seeding,
+                  let f = c.files.first(where: { $0.index == e.file }) else {
+                if list.first(where: { $0.gid == gid }) == nil { stopEarly(gid) }
+                continue
+            }
+            let ready = c.readyFromStart(f)
+            // Enough to start: about 2% of the film (at least 48 MB) plus its last piece.
+            let need = min(f.length, max(48_000_000, f.length / 50))
+            if !e.playing {
+                let p = min(1, Double(ready) / Double(need)) * (c.hasEnd(f) ? 1 : 0.95)
+                if abs(p - (earlyPrep[gid] ?? 0)) > 0.02 { earlyPrep[gid] = p }
+                if ready >= need, c.hasEnd(f) {
+                    early[gid]?.playing = true
+                    earlyPrep[gid] = 1
+                    say("▶️ Playing \(f.name) while the rest downloads")
+                    Task { await Streamer.shared.play(URL(fileURLWithPath: f.path), alone: true) }
+                }
+            }
+            if f.done >= f.length { stopEarly(gid); continue }
+            // Nearly caught up with the window: move it 400 MB further (at most once a minute).
+            if ready >= e.head - 100_000_000, e.head < f.length, Date().timeIntervalSince(e.moved) > 60 {
+                let next = e.head + 400_000_000
+                early[gid]?.head = next
+                early[gid]?.moved = Date()
+                Task { await prioritize(gid, head: next) }
+            }
+        }
     }
 
     // MARK: Unpacking .zip downloads

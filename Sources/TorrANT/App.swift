@@ -49,10 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 MainActor.assumeIsolated {
                     Streamer.shared.warmUp()   // stream server + preload ready before the first ▶
+                    HomeShare.shared.start()   // only if you turned it on
                     Task { await LibraryStore.shared.refresh() }   // posters for anything new, without opening the Library
                 }
             }
             NightShift.shared.begin()
+            Speed.shared.begin()
         }
         Catcher.shared.start()
     }
@@ -74,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         Catcher.shared.stop()
         MainActor.assumeIsolated {
+            HomeShare.shared.stop()
             Uploader.shared.stop()
             Streamer.shared.stop()
             Colony.shared.shutdown()
@@ -290,7 +293,19 @@ struct SettingsView: View {
                 Text("Hover a finished download and press the cloud to move it there, or use the Google Drive page.")
                     .font(Theme.body(12)).foregroundStyle(Theme.muted)
             }
+            SpeedSettings()
+            HomeShareSettings()
             PhoneSettings()
+            VStack(alignment: .leading, spacing: 2) {
+                Toggle("Encrypted torrent connections only", isOn: Binding(
+                    get: { colony.requireCrypto }, set: { colony.requireCrypto = $0 }))
+                    .toggleStyle(.checkbox)
+                    .font(Theme.body(14))
+                Text("Turn on if your internet provider slows down torrents. Fewer people can connect, so leave it off otherwise.")
+                    .font(Theme.body(12)).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 20)
+            }
             Toggle("Watch the clipboard for crumbs (download links and magnets)", isOn: Binding(
                 get: { colony.watchClipboard }, set: { colony.watchClipboard = $0 }))
                 .toggleStyle(.checkbox)

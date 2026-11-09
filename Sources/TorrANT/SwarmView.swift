@@ -124,6 +124,9 @@ struct SwarmView: View {
                                     .foregroundStyle(isPicked(f) ? Theme.text : Theme.muted)
                                 Spacer()
                                 Text(Fmt.bytes(f.length)).font(Theme.body(13)).foregroundStyle(Theme.muted)
+                                if !c.isMetadata, isPicked(f), Streamer.isVideo(URL(fileURLWithPath: f.name)) {
+                                    watchButton(f, c)
+                                }
                                 if c.kind == .swarm && c.files.count > 1 && !c.isMetadata {
                                     carryToggle(f, c)
                                 }
@@ -137,6 +140,22 @@ struct SwarmView: View {
             }
         }
         .onAppear { if !picksLoaded { picks = Set(c.files.filter(\.selected).map(\.index)); picksLoaded = true } }
+    }
+
+    /// ▶ Watch now: plays the video while the rest of it downloads.
+    private func watchButton(_ f: CrumbFile, _ c: Crumb) -> some View {
+        let prep = colony.earlyPrep[c.gid]
+        let label = prep.map { $0 >= 1 ? "▶ Playing" : "Getting ready \(Int($0 * 100))%" } ?? "▶ Watch now"
+        return Button {
+            Task { await colony.watchEarly(c, f) }
+        } label: {
+            Text(label).font(Theme.body(12, .semibold)).foregroundStyle(.white)
+                .padding(.horizontal, 12).frame(height: 28)
+                .background(Capsule().fill(Theme.redFill))
+        }
+        .buttonStyle(.plain)
+        .disabled(prep != nil && prep! < 1)
+        .help("Starts playing in VLC once the opening has arrived. Torrents arrive in scattered pieces, so if you jump far ahead it may pause until the ants catch up.")
     }
 
     private func isPicked(_ f: CrumbFile) -> Bool { picksLoaded ? picks.contains(f.index) : f.selected }
