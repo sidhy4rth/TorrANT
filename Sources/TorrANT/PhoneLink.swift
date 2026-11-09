@@ -124,6 +124,14 @@ final class PhoneLink {
             for u in updates {
                 if let id = (u["update_id"] as? NSNumber)?.int64Value { offset = max(offset, id + 1) }
                 if let q = u["callback_query"] as? [String: Any] { await tapped(q, token: token); continue }
+                // A .torrent sent as a file.
+                if let m = u["message"] as? [String: Any], let doc = m["document"] as? [String: Any],
+                   let chat = (m["chat"] as? [String: Any])?["id"] as? NSNumber, chat.int64Value == chatID, chatID != 0,
+                   let fid = doc["file_id"] as? String,
+                   (doc["file_name"] as? String ?? "").lowercased().hasSuffix(".torrent") || (doc["mime_type"] as? String) == "application/x-bittorrent" {
+                    await torrentFile(fid, caption: m["caption"] as? String ?? "", token: token)
+                    continue
+                }
                 guard let m = u["message"] as? [String: Any],
                       let chat = (m["chat"] as? [String: Any])?["id"] as? NSNumber,
                       let text = (m["text"] as? String) ?? (m["caption"] as? String) else { continue }
@@ -217,7 +225,7 @@ final class PhoneLink {
         case "start", "help":
             await reply(token, """
             🐜 How it works
-            • Share or paste links: files, pages full of downloads, or magnets.
+            • Share or paste links: files, pages full of downloads, or magnets. You can also send a .torrent file.
             • They wait for the night shift (\(NightShift.clock(NightShift.shared.start))–\(NightShift.clock(NightShift.shared.end))). Add "now" to start straight away.
             • ⚡ Instant mode (button at the bottom): links start downloading the moment you share them. Tap again for 🌙 Night mode.
             • 📊 Status: a live view that updates itself.
@@ -267,7 +275,7 @@ final class PhoneLink {
         let size = total > 0 ? " · \(Fmt.bytes(total))" : ""
 
         if now && !NetWatch.shared.metered {
-            for g in grabs { await Colony.shared.send(g.url) }
+            for g in grabs { await Colony.shared.sendQuietly(g.url) }
             await reply(token, "▶️ The ants are on it → \(dest)\(size)\n\(list)\(more)\(capped)")
             await startLive(token)
         } else {
@@ -280,6 +288,60 @@ final class PhoneLink {
                 "text": "🌙 Queued for tonight → \(dest)\(size)\n\(list)\(more)\(capped)\n\n\(nightLine())\(why)",
                 "reply_markup": inline([[(added.count > 1 ? "▶️ Start all now" : "▶️ Start now", "nb:\(key)"),
                                          (added.count > 1 ? "❌ Remove all" : "❌ Remove", "rb:\(key)")]])])
+        }
+    }
+
+    /// A .torrent file sent to the bot: fetch it from Telegram, then start it or queue it like a link.
+    private func torrentFile(_ fileID: String, caption: String, token: String) async {
+        guard let f = await api(token, "getFile", ["file_id": fileID]) as? [String: Any],
+              let path = f["file_path"] as? String,
+              let url = URL(string: "https://api.telegram.org/file/bot\(token)/\(path)"),
+              let (data, resp) = try? await URLSession.shared.data(from: url),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else {
+            await reply(token, "🚧 Couldn't fetch that .torrent from Telegram. Try sending it again.")
+            return
+        }
+        guard let info = TorrentInfo.parse(data) else {
+            await reply(token, "🤔 That file doesn't look like a valid .torrent.")
+            return
+        }
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TorrANT/phone-torrents", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let saved = folder.appendingPathComponent(UUID().uuidString + ".torrent")
+        guard (try? data.write(to: saved)) != nil else { await reply(token, "🚧 Couldn't save that .torrent on the Mac."); return }
+        var grab = Grab(url: saved.absoluteString, name: info.name, kind: .torrent, size: info.size > 0 ? info.size : nil)
+        let line = "• \(info.name)" + (info.size > 0 ? " · \(Fmt.bytes(info.size))" : "")
+
+        let words = Set(caption.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+        let now = words.contains("now") || (instant && !words.contains("tonight") && !words.contains("later"))
+
+        if let have = await LibraryStore.shared.alreadyHave(info.name) {
+            grab.have = have
+            let key = String(UUID().uuidString.prefix(8))
+            dupeOffers[key] = ([grab], now)
+            await api(token, "sendMessage", [
+                "chat_id": chatID, "text": "📚 You already have \(have).\n\(line)\n\nSkipped so you don't spend data twice.",
+                "reply_markup": inline([[("⬇️ Get it anyway", "ga:\(key)")]])])
+            return
+        }
+        let dest = Uploader.shared.straightToDrive ? "💻 the Mac, then ☁️ Google Drive" : "💻 the Mac"
+        if now && !NetWatch.shared.metered {
+            if await Colony.shared.sendQuietly(grab.url) {
+                await reply(token, "🐜 The swarm is on it → \(dest)\n\(line)")
+                await startLive(token)
+            } else {
+                await reply(token, "🚧 TorrANT couldn't start that torrent.")
+            }
+        } else {
+            let added = NightShift.shared.add([grab])
+            let key = String(UUID().uuidString.prefix(8))
+            batches[key] = added.map(\.id)
+            let why = now ? "\n📵 The Mac is on a hotspot or Low Data Mode, so it waits for Wi-Fi." : ""
+            await api(token, "sendMessage", [
+                "chat_id": chatID,
+                "text": "🌙 Torrent queued for tonight → \(dest)\n\(line)\n\n\(nightLine())\(why)",
+                "reply_markup": inline([[("▶️ Start now", "nb:\(key)"), ("❌ Remove", "rb:\(key)")]])])
         }
     }
 
@@ -317,7 +379,7 @@ final class PhoneLink {
         case "ga":
             guard let offer = dupeOffers.removeValue(forKey: arg) else { await answer("Already handled"); return }
             if offer.now && !NetWatch.shared.metered {
-                for g in offer.grabs { await Colony.shared.send(g.url) }
+                for g in offer.grabs { await Colony.shared.sendQuietly(g.url) }
                 await answer("▶️ Downloading anyway")
                 await edit(oldText + "\n\n▶️ Downloading anyway")
                 await startLive(token)

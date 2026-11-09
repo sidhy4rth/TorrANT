@@ -228,7 +228,8 @@ TorrANT talks to a Telegram bot you own. It listens with one long request at a t
 port opened on your Mac), and the bot's token sits in a private file only your account can read.
 
 - **Share, don't type.** Any link shared to the bot is checked the same way the Link Grabber checks
-  it, then queued for the night shift. Pages full of downloads are opened and searched. "now" in
+  it, then queued for the night shift. `.torrent` files work too: send one as a file and TorrANT
+  fetches it from Telegram, reads its name and size, and starts or queues it with every file. Pages full of downloads are opened and searched. "now" in
   the message starts it straight away, unless the Mac is on a hotspot.
 - **Buttons, not commands.** A button bar sits under the chat (📊 Status · 🌙 Queue · ⏸ Pause all ·
   ▶️ Resume all), queued links get ▶️ / ❌ buttons, and the queue lists every item with its own.
@@ -268,6 +269,7 @@ Everything below was run on a real Mac (macOS 26, Apple Silicon) and looked at, 
 | Library | Seven titles in Drive | All seven posters, cleaned titles, episode counts |
 | Link Grabber | Two Blender release pages | 75 and 11 links with names and sizes; 1 MB of data used |
 | Night shift | Short test windows | Sent on time, *Night shift done ✓*, and unfinished downloads paused at the end |
+| Torrents from the phone and night shift | A valid and a broken test `.torrent` in a night batch | The valid one started with no file-picker sheet; the broken one was reported once and not retried |
 | Pocket remote | Paired an Android phone, sent "status" and a link from Telegram | Bot answered from the Mac; the link landed in the night queue with its size and ▶️ / ❌ buttons |
 | Zip link, Straight to Drive | A 3 MB zip of 848 small files | Unpacked on the Mac, uploaded (about 6½ minutes), Mac copy gone |
 

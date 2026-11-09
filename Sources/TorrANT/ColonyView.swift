@@ -296,10 +296,13 @@ struct TrailRow: View {
             Pill(text: look.pill, fg: look.fg, bg: look.bg).frame(width: 96, alignment: .leading)
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 12) {
+                    // The name gets first claim on the width; the status text shrinks instead
+                    // (in the one-window layout a fixed 300 pt squeezed names to nothing).
                     Text(c.name).font(Theme.body(15, .semibold)).lineLimit(1).truncationMode(.middle)
+                        .layoutPriority(1)
                     Spacer(minLength: 8)
-                    LiveLabel(live: c.isMoving, font: LiveFont.body(14), color: Theme.muted, align: .right) { meta($0) }
-                        .frame(width: 300, height: 20)
+                    LiveLabel(live: c.isMoving, font: LiveFont.body(13), color: Theme.muted, align: .right) { meta($0) }
+                        .frame(minWidth: 150, maxWidth: 240, minHeight: 20, maxHeight: 20)
                 }
                 LiveBarLayer(live: c.isMoving, color: look.bar, ant: look.ant) { c.liveProgress($0) }
                     .frame(height: 18)

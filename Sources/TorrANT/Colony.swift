@@ -343,6 +343,38 @@ final class Colony {
         }
     }
 
+    /// A .torrent from the phone or the night shift: nobody's at the Mac to pick files, so it
+    /// carries every file and starts straight away (the Mac's own Open shows the picker).
+    @discardableResult
+    func addTorrentQuietly(_ url: URL) async -> Bool {
+        do {
+            let data = try Data(contentsOf: url)
+            let folder = support.appendingPathComponent("torrents", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let saved = folder.appendingPathComponent(UUID().uuidString + ".torrent")
+            try data.write(to: saved)
+            let gid = try await aria.call("aria2.addTorrent", [data.base64EncodedString(), [String](), ["dir": downloadDir.path]]) as? String ?? ""
+            guard !gid.isEmpty else { return false }
+            swarmByGID[gid] = saved.path
+            swarms.append(SavedSwarm(file: saved.path, dir: downloadDir.path, select: nil, paused: false))
+            saveSwarms()
+            await refresh()
+            return true
+        } catch {
+            say("That .torrent didn't work: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Like send(), but never stops to ask anything: for the night shift and the phone.
+    @discardableResult
+    func sendQuietly(_ raw: String) async -> Bool {
+        if let u = URL(string: raw), u.isFileURL, u.pathExtension.lowercased() == "torrent" {
+            return await addTorrentQuietly(u)
+        }
+        return await send(raw)
+    }
+
     func confirm(_ p: PendingTorrent, selected: Set<Int>, dir: URL, startNow: Bool) async {
         pending = nil
         let picks = selected.sorted().map(String.init).joined(separator: ",")

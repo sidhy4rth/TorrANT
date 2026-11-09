@@ -146,6 +146,7 @@ final class NightShift {
         let size: Int64?
         var added = Date()
         var sent = false
+        var failed: Bool? = nil   // couldn't start (bad link or broken .torrent): not retried all night
     }
 
     var items: [Item] = []
@@ -176,7 +177,7 @@ final class NightShift {
         pausedForDay = UserDefaults.standard.bool(forKey: "nightPaused")
     }
 
-    var waiting: [Item] { items.filter { !$0.sent } }
+    var waiting: [Item] { items.filter { !$0.sent && $0.failed != true } }
     var waitingBytes: Int64 { waiting.reduce(0) { $0 + ($1.size ?? 0) } }
 
     /// Holds the Mac awake from the moment a batch is queued until the night's work is handed over.
@@ -218,7 +219,7 @@ final class NightShift {
         var n = 0
         for id in ids {
             guard let it = items.first(where: { $0.id == id && !$0.sent }) else { continue }
-            if await Colony.shared.send(it.url), let j = items.firstIndex(where: { $0.id == id }) {
+            if await Colony.shared.sendQuietly(it.url), let j = items.firstIndex(where: { $0.id == id }) {
                 items[j].sent = true; n += 1
             }
         }
@@ -227,7 +228,7 @@ final class NightShift {
     }
 
     func remove(_ id: UUID) { items.removeAll { $0.id == id }; save() }
-    func clearSent() { items.removeAll { $0.sent }; save() }
+    func clearSent() { items.removeAll { $0.sent || $0.failed == true }; save() }
 
     private func save() {
         if let d = try? JSONEncoder().encode(items) { try? d.write(to: file, options: .atomic) }
@@ -268,13 +269,19 @@ final class NightShift {
             let todo = waiting
             guard !todo.isEmpty else { save(); return }
             running = true
+            var ok = 0
+            var bad: [String] = []
             for item in todo {
-                if await colony.send(item.url), let i = items.firstIndex(where: { $0.id == item.id }) {
-                    items[i].sent = true
-                }
+                let started = await colony.sendQuietly(item.url)
+                guard let i = items.firstIndex(where: { $0.id == item.id }) else { continue }
+                if started { items[i].sent = true; ok += 1 } else { items[i].failed = true; bad.append(item.name) }
             }
-            colony.say("Night shift: sent \(todo.count) download\(todo.count == 1 ? "" : "s")")
-            PhoneLink.shared.notify("🌙 Night shift started: \(todo.count) download\(todo.count == 1 ? "" : "s") on the way", live: true)
+            let failNote = bad.isEmpty ? "" : " · couldn't start \(bad.count): \(bad.prefix(3).joined(separator: ", "))"
+            colony.say("Night shift: sent \(ok) download\(ok == 1 ? "" : "s")\(failNote)")
+            if ok > 0 || !bad.isEmpty {
+                PhoneLink.shared.notify("🌙 Night shift started: \(ok) download\(ok == 1 ? "" : "s") on the way"
+                                        + (bad.isEmpty ? "" : "\n⚠️ Couldn't start: " + bad.prefix(5).joined(separator: ", ")), live: ok > 0)
+            }
             save()
         } else if running {
             // Window's over: pause anything still on the trail; it carries on tomorrow night.
@@ -394,7 +401,7 @@ struct GrabberView: View {
                     Spacer()
                     Button("Download now") {
                         let p = picked
-                        Task { for g in p { await Colony.shared.send(g.url) } }
+                        Task { for g in p { await Colony.shared.sendQuietly(g.url) } }
                         found.removeAll(where: \.picked)
                     }
                     .buttonStyle(GhostButtonStyle())
@@ -477,8 +484,8 @@ struct GrabberView: View {
                     }
                 }
                 .scrollIndicators(.never)
-                if night.items.contains(where: \.sent) {
-                    Button("Clear sent") { night.clearSent() }.buttonStyle(GhostButtonStyle())
+                if night.items.contains(where: { $0.sent || $0.failed == true }) {
+                    Button("Clear finished") { night.clearSent() }.buttonStyle(GhostButtonStyle())
                 }
             }
             Spacer(minLength: 0)
@@ -555,11 +562,11 @@ private struct NightRow: View {
     @State private var hover = false
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: item.sent ? "checkmark.circle.fill" : "moon.zzz.fill")
-                .foregroundStyle(item.sent ? Theme.safe : Theme.muted)
+            Image(systemName: item.failed == true ? "exclamationmark.triangle.fill" : item.sent ? "checkmark.circle.fill" : "moon.zzz.fill")
+                .foregroundStyle(item.failed == true ? Theme.red : item.sent ? Theme.safe : Theme.muted)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.name).font(Theme.body(13, .semibold)).lineLimit(1).truncationMode(.middle)
-                Text(item.sent ? "Sent" : (item.size.map { Fmt.bytes($0) } ?? "Waiting"))
+                Text(item.failed == true ? "Couldn't start" : item.sent ? "Sent" : (item.size.map { Fmt.bytes($0) } ?? "Waiting"))
                     .font(Theme.body(11)).foregroundStyle(Theme.muted)
             }
             Spacer()
