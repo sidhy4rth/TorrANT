@@ -12,6 +12,7 @@ struct Grab: Identifiable, Equatable {
     var size: Int64?
     var picked = true
     var have: String?            // "Moana (2026), in your Library" when you already have it
+    var health: String?          // "🌱 85 seeders · should be fast" for torrents and magnets
 }
 
 enum LinkGrabber {
@@ -440,6 +441,15 @@ struct GrabberView: View {
             }
             for await (id, size, name) in group { apply(id, size, name) }
         }
+        // Torrents and magnets: how many people have them, a few at a time.
+        await withTaskGroup(of: (UUID, String?).self) { group in
+            for g in found where g.health == nil && (g.kind == .torrent || g.kind == .magnet) {
+                group.addTask { (g.id, await Health.forLink(g.url)) }
+            }
+            for await (id, h) in group {
+                if let i = found.firstIndex(where: { $0.id == id }) { found[i].health = h }
+            }
+        }
         // Already have it? Label it and leave it unticked.
         for i in found.indices where found[i].have == nil {
             if let have = await LibraryStore.shared.alreadyHave(found[i].name) {
@@ -542,7 +552,7 @@ private struct GrabRow: View {
                         Pill(text: "IN LIBRARY", fg: Theme.safe, bg: Color(hex: 0x1F3A1C))
                     }
                 }
-                Text(grab.have.map { "You already have \($0)" } ?? (URL(string: grab.url)?.host ?? (grab.kind == .magnet ? "magnet link" : "")))
+                Text(grab.have.map { "You already have \($0)" } ?? grab.health ?? (URL(string: grab.url)?.host ?? (grab.kind == .magnet ? "magnet link" : "")))
                     .font(Theme.body(12)).foregroundStyle(grab.have != nil ? Theme.safe : Theme.muted).lineLimit(1)
             }
             Spacer()

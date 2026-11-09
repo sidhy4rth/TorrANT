@@ -271,6 +271,10 @@ final class Colony {
             if let have = await LibraryStore.shared.alreadyHave(LinkGrabber.name(of: line)) {
                 say("📚 You already have \(have). Downloading anyway")
             }
+            if Link.isMagnet(line) || line.lowercased().hasSuffix(".torrent") {
+                let name = LinkGrabber.name(of: line)
+                Task { if let h = await Health.forLink(line) { self.say("\(name): \(h)") } }
+            }
             // Zips stop on the Mac first: Drive can't stream what's inside a zip, so they're
             // downloaded, unpacked, uploaded and deleted (the hands-free path) instead.
             let ext = URL(string: line)?.pathExtension.lowercased() ?? ""

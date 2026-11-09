@@ -267,8 +267,11 @@ final class PhoneLink {
                 "reply_markup": inline([[("⬇️ Get \(dupes.count == 1 ? "it" : "them") anyway", "ga:\(key)")]])])
             if grabs.isEmpty { return }
         }
+        for i in grabs.indices where grabs[i].kind == .torrent || grabs[i].kind == .magnet {
+            grabs[i].health = await Health.forLink(grabs[i].url)
+        }
         let total = grabs.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
-        let list = grabs.prefix(8).map { "• \($0.name)" + ($0.size.map { " · \(Fmt.bytes($0))" } ?? "") }.joined(separator: "\n")
+        let list = grabs.prefix(8).map { "• \($0.name)" + ($0.size.map { " · \(Fmt.bytes($0))" } ?? "") + ($0.health.map { "\n   \($0)" } ?? "") }.joined(separator: "\n")
         let more = grabs.count > 8 ? "\n…and \(grabs.count - 8) more" : ""
         let capped = r.found.count > 25 ? "\n(First 25 of \(r.found.count) links on that page.)" : ""
         let dest = Uploader.shared.straightToDrive ? "☁️ Google Drive" : "💻 the Mac"
@@ -311,7 +314,11 @@ final class PhoneLink {
         let saved = folder.appendingPathComponent(UUID().uuidString + ".torrent")
         guard (try? data.write(to: saved)) != nil else { await reply(token, "🚧 Couldn't save that .torrent on the Mac."); return }
         var grab = Grab(url: saved.absoluteString, name: info.name, kind: .torrent, size: info.size > 0 ? info.size : nil)
-        let line = "• \(info.name)" + (info.size > 0 ? " · \(Fmt.bytes(info.size))" : "")
+        var verdict: String?
+        if let h = Health.hash(torrent: data) {
+            verdict = Health.label(await Health.check(h, trackers: Health.trackers(torrent: data)))
+        }
+        let line = "• \(info.name)" + (info.size > 0 ? " · \(Fmt.bytes(info.size))" : "") + (verdict.map { "\n   \($0)" } ?? "")
 
         let words = Set(caption.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
         let now = words.contains("now") || (instant && !words.contains("tonight") && !words.contains("later"))
