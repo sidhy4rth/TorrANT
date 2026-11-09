@@ -33,7 +33,7 @@ struct RelayLine: Identifiable {
 @MainActor
 enum RelayBoard {
     static func lines() -> [RelayLine] {
-        if ProcessInfo.processInfo.environment["TORRANT_DEMO_RELAY"] != nil { return demo() }
+        if ProcessInfo.processInfo.environment["TORRANT_DEMO"] != nil || ProcessInfo.processInfo.environment["TORRANT_DEMO_RELAY"] != nil { return demo() }
         let colony = Colony.shared, up = Uploader.shared, night = NightShift.shared
         var out: [RelayLine] = []
 
@@ -82,36 +82,17 @@ enum RelayBoard {
         return out
     }
 
-    /// Pretend lines for screenshots and testing (TORRANT_DEMO_RELAY=1); never touches real downloads.
+    /// Pretend lines for screenshots and testing (TORRANT_DEMO=1); free films only, never touches real downloads.
     static func demo() -> [RelayLine] {
-        func loop(_ secs: Double, _ off: Double) -> (Date) -> Double {
-            { now in ((now.timeIntervalSinceReferenceDate + off) / secs).truncatingRemainder(dividingBy: 1) }
+        func L(_ id: String, _ title: String, _ leg: RelayLine.Leg, _ p: Double, _ detail: String, _ busy: Bool) -> RelayLine {
+            RelayLine(id: id, title: title, leg: leg, progress: { _ in p }, detail: { _ in detail }, busy: busy)
         }
-        func leg(_ secs: Double, _ off: Double, _ now: Date) -> (RelayLine.Leg, Double) {
-            let v = loop(secs, off)(now) * 3.4
-            if v < 0.4 { return (.queued, 0) }
-            let w = v - 0.4
-            return w < 1 ? (.downloading, w) : w < 2 ? (.toDrive, w - 1) : (.shelving, w - 2)
-        }
-        let now = Date()
-        func line(_ id: String, _ title: String, _ secs: Double, _ off: Double) -> RelayLine {
-            let (l, _) = leg(secs, off, now)
-            return RelayLine(id: id, title: Titles.pretty(title), leg: l, progress: { leg(secs, off, $0).1 },
-                             detail: { d in
-                                 let (l, p) = leg(secs, off, d)
-                                 switch l {
-                                 case .queued: return "asleep till 1:00 AM"
-                                 case .downloading: return "\(Int(p * 100))% · 6.2 MB/s · 41 ants"
-                                 case .toDrive: return "flying to Drive · \(Int(p * 100))%"
-                                 default: return "green ant shelving it"
-                                 }
-                             }, busy: l != .queued)
-        }
-        return [line("d1", "Marshals.S01E05.1080p.WEB-DL.mkv", 60, 14), line("d2", "Carrie.S01E05.1080p.mkv", 75, 40),
-                line("d3", "Primetime.2026.1080p.mkv", 50, 34),
-                RelayLine(id: "d4", title: Titles.pretty("Campus.Drivers.S01E07.mkv"), leg: .queued, progress: { _ in 0 }, detail: { _ in "asleep till 1:00 AM" }, busy: false),
-                RelayLine(id: "d5", title: Titles.pretty("Old.Torrent.With.No.Seeds.2019.mkv"), leg: .stuck, progress: { _ in 0.31 }, detail: { _ in "stuck: nobody is sharing it" }, busy: false),
-                RelayLine(id: "d6", title: Titles.pretty("War.Machine.2026.1080p.mkv"), leg: .done, progress: { _ in 1 }, detail: { _ in "in your Library ✓" }, busy: false)]
+        return [L("d1", "Sintel (2010)", .downloading, 0.62, "62% · 6.2 MB/s · 41 ants", true),
+                L("d2", "Tears of Steel (2012)", .toDrive, 0.55, "flying to Drive · 55% · 4.2 MB/s", true),
+                L("d3", "Big Buck Bunny (2008)", .shelving, 0.5, "green ant shelving it", true),
+                L("d4", "Debian 13 netinst", .queued, 0, "asleep till 1:00 AM", false),
+                L("d5", "Elephants Dream (2006)", .stuck, 0.31, "stuck: nobody is sharing it", false),
+                L("d6", "Cosmos Laundromat (2015)", .done, 1, "in your Library ✓", false)]
     }
 }
 

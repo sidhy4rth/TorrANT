@@ -12,7 +12,12 @@ BIN="$(swift build -c release --show-bin-path)/TorrANT"
 # macOS cache it with no icon, and the Dock then shows a blank tile.
 mkdir -p build
 ICON_SRC=build/icon-1024.png
-"$BIN" --export-icon "$PWD/$ICON_SRC"
+if [ -f Support/AppIcon-1024.png ]; then
+  # The designed icon (Support/AppIcon.svg, rendered to PNG).
+  cp Support/AppIcon-1024.png "$ICON_SRC"
+else
+  "$BIN" --export-icon "$PWD/$ICON_SRC"
+fi
 
 APP=build/TorrANT.app
 rm -rf "$APP"

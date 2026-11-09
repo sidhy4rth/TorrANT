@@ -29,9 +29,9 @@
 <br>
 
 <p align="center">
-  <img src="docs/assets/screen-colony.png" alt="The Colony: a Blender download and three torrents (Big Buck Bunny, Sintel, Debian) on the trail at 36.3 MB/s" width="100%">
+  <img src="docs/assets/screen-lines.png" alt="Lines: six downloads on the ant relay, from the queue to the Mac, Google Drive and the Library" width="100%">
 </p>
-<p align="center"><sub>The Colony, 8 Nov 2026. One crumb (a direct link to Blender, 8 ants pulling) and three swarms (Debian, Sintel, Big Buck Bunny) coming home at 36.3 MB/s together. Every number on this screen moves every frame and never goes backwards.</sub></p>
+<p align="center"><sub>Lines. Every download rides the ant relay: the red ant brings Sintel home, the amber ant flies Tears of Steel up to Drive, the green ant shelves Big Buck Bunny, a night ant sleeps on Debian till 1 AM, and a stuck torrent gets a grey ant with a "!". (Free, openly licensed films; shown in TorrANT's screenshot mode.)</sub></p>
 
 ---
 
@@ -106,7 +106,7 @@ drawn while nothing moves, so an idle TorrANT costs no CPU, and macOS "Reduce mo
 
 <table>
 <tr>
-<td width="62%"><img src="docs/assets/screen-home.png" alt="Everything home: the Anthill lists the arrivals and three torrents feed other colonies"><br><sub><b>Everything home.</b> 1.507 GB carried in, the trail empty, three swarms feeding other colonies, and the chatter: <i>"All quiet. The Mac can sleep again."</i></sub></td>
+<td width="62%"><img src="docs/assets/screen-library.png" alt="The Library: Just shelved spotlight with the librarian ant, filters, and posters on shelves"><br><sub><b>The Library.</b> The librarian ant has just shelved Sintel; its synopsis, Play and your stars sit beside it. Below, every poster on its shelf, with filters and sorting.</sub></td>
 <td width="38%"><img src="docs/assets/screen-brave-popup.png" alt="The TorrANT Catcher popup in Brave"><br><sub><b>TorrANT Catcher</b>, the Brave extension. One switch, whether the colony is awake, and what it caught last.</sub></td>
 </tr>
 </table>

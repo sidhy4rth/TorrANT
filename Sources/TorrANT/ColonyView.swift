@@ -175,7 +175,8 @@ struct ColonyView: View {
             Text("The Anthill").font(Theme.display(22))
             Text("Everything the ants brought home.").font(Theme.body(14)).foregroundStyle(Theme.muted)
                 .padding(.top, -8)
-            if colony.hill.isEmpty {
+            let hill = LibraryStore.demo ? Self.demoHill : colony.hill
+            if hill.isEmpty {
                 Text("Empty for now. Finished downloads land here.")
                     .font(Theme.body(14)).foregroundStyle(Theme.muted)
                     .padding(14).frame(maxWidth: .infinity, alignment: .leading)
@@ -183,7 +184,7 @@ struct ColonyView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(colony.hill) { h in HillRow(item: h) }
+                        ForEach(hill) { h in HillRow(item: h) }
                     }
                 }
                 .scrollIndicators(.never)
@@ -226,6 +227,12 @@ struct ColonyView: View {
         .background(Theme.sidebar)
         .overlay(alignment: .leading) { Rectangle().fill(Theme.surface2).frame(width: 1) }
     }
+
+    /// Screenshot mode (TORRANT_DEMO=1): free films in the Anthill instead of your own.
+    private static let demoHill: [HillItem] = [
+        ("Cosmos.Laundromat.2015.1080p.mkv", 0.2), ("Spring.2019.1080p.mkv", 3), ("Sprite.Fright.2021.1080p.mkv", 9),
+        ("Coffee.Run.2020.1080p.mkv", 26), ("Charge.2022.1080p.mkv", 30), ("Glass.Half.2015.1080p.mkv", 50)
+    ].map { HillItem(name: $0.0, path: "/tmp/torrant-demo/\($0.0)", size: 900_000_000, kind: .swarm, date: Date().addingTimeInterval(-$0.1 * 3600)) }
 
     // MARK: Actions
 

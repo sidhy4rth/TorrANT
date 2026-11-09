@@ -208,7 +208,30 @@ final class LibraryStore {
         await refresh()
     }
 
+    /// Screenshot mode (TORRANT_DEMO=1): free, openly licensed films instead of your own Library.
+    static var demo: Bool { ProcessInfo.processInfo.environment["TORRANT_DEMO"] != nil }
+
+    nonisolated static func demoEntries() -> [LibraryEntry] {
+        let films: [(String, Int)] = [("Sintel", 2010), ("Tears of Steel", 2012), ("Big Buck Bunny", 2008), ("Cosmos Laundromat", 2015),
+                                      ("Elephants Dream", 2006), ("Sprite Fright", 2021), ("Spring", 2019), ("Agent 327 Operation Barbershop", 2017),
+                                      ("Caminandes Llamigos", 2016), ("Glass Half", 2015), ("Coffee Run", 2020), ("Charge", 2022)]
+        let base = URL(fileURLWithPath: "/tmp/torrant-demo")
+        return films.enumerated().map { i, f in
+            LibraryEntry(url: base.appendingPathComponent("\(f.0).\(f.1).1080p.mkv"), isShow: false, title: f.0, year: f.1,
+                         season: nil, episodes: [], added: Date().addingTimeInterval(Double(-i) * 3600))
+        }
+    }
+
     func refresh() async {
+        if Self.demo {
+            var found = Self.demoEntries()
+            for i in found.indices { if let n = names[found[i].posterKey] { found[i].title = n } }
+            if found != entries { entries = found }
+            scanned = true
+            await fetchPosters()
+            await TitleInfo.shared.fetch(entries)
+            return
+        }
         guard let root = Colony.shared.driveDir else { entries = []; scanned = true; return }
         var found = await Task.detached(priority: .utility) { LibraryStore.scan(root) }.value
         for i in found.indices { if let n = names[found[i].posterKey] { found[i].title = n } }
