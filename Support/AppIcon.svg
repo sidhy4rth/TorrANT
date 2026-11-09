@@ -1,19 +1,22 @@
 <!-- TorrANT app icon (Honey): the carrier ant bringing a crumb home. Rendered to AppIcon-1024.png. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <rect x="100" y="100" width="824" height="824" rx="186" fill="#F2A93B"/>
-  <g transform="translate(30 -34)">
-  <g stroke="#1A1307" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <path d="M520 600 L465 690 L420 772"/><path d="M570 612 L580 700 L566 776"/><path d="M618 600 L680 688 L734 768"/>
-    <path d="M718 438 Q748 340 700 282"/><path d="M676 440 Q630 352 566 326"/>
-  </g>
-  <ellipse cx="330" cy="585" rx="158" ry="122" fill="#1A1307"/>
-  <circle cx="478" cy="585" r="30" fill="#1A1307"/>
-  <ellipse cx="566" cy="572" rx="82" ry="64" fill="#1A1307"/>
-  <circle cx="708" cy="520" r="86" fill="#1A1307"/>
-  <circle cx="740" cy="500" r="15" fill="#F2A93B"/>
-  <g transform="rotate(-8 330 410)">
-    <rect x="236" y="330" width="190" height="168" rx="34" fill="#FFF4DF"/>
-    <path d="M331 368 L331 450 M296 418 L331 454 L366 418" stroke="#1A1307" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  </g>
+  <g transform="translate(512 512) scale(0.88) translate(-483 -529)">
+    <g stroke="#1A1307" stroke-width="31" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M512 598 L436 652 L404 772"/>
+      <path d="M568 612 L540 690 L562 776"/>
+      <path d="M620 598 L702 644 L748 768"/>
+      <path d="M718 438 Q748 340 700 282"/>
+      <path d="M676 440 Q630 352 566 326"/>
+    </g>
+    <ellipse cx="330" cy="585" rx="158" ry="122" fill="#1A1307"/>
+    <circle cx="478" cy="585" r="30" fill="#1A1307"/>
+    <ellipse cx="566" cy="572" rx="82" ry="64" fill="#1A1307"/>
+    <circle cx="708" cy="520" r="86" fill="#1A1307"/>
+    <circle cx="740" cy="500" r="15" fill="#F2A93B"/>
+    <g transform="rotate(-8 330 410)">
+      <rect x="236" y="330" width="190" height="168" rx="34" fill="#FFF4DF"/>
+      <path d="M331 368 L331 450 M296 418 L331 454 L366 418" stroke="#1A1307" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </g>
   </g>
 </svg>
