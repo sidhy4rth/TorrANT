@@ -11,6 +11,11 @@ struct FilmCollection: Codable, Equatable, Identifiable {
     var name: String
     var members: [Member]     // every film in the series, in order (owned or not)
     var fetched = Date()
+
+    /// A show's seasons kept together (id "show:<name>"), not a film series from Wikidata.
+    var isShow: Bool { id.hasPrefix("show:") }
+    /// "4 films" / "8 seasons"
+    func count(_ n: Int) -> String { "\(n) " + (isShow ? (n == 1 ? "season" : "seasons") : (n == 1 ? "film" : "films")) }
 }
 
 /// Groups Library films into series, from Wikidata (free, no account): a film's page says
@@ -57,7 +62,9 @@ final class Collections {
     // MARK: Reading
 
     func seriesID(_ e: LibraryEntry) -> String? {
-        guard !e.isShow, let s = saved.filmSeries[e.posterKey], !s.isEmpty, saved.series[s] != nil else { return nil }
+        // Every season of a show belongs to that show's collection (user, 16 Nov: Game of Thrones).
+        if e.isShow { return e.posterKey }
+        guard let s = saved.filmSeries[e.posterKey], !s.isEmpty, saved.series[s] != nil else { return nil }
         return s
     }
 
@@ -74,14 +81,21 @@ final class Collections {
         return formed(entries)[s] != nil
     }
 
-    /// Collections you have 2+ films of, by name.
+    /// Collections you have 2+ films (or 2+ seasons of a show) of, by name.
     func collections(in entries: [LibraryEntry]) -> [FilmCollection] {
-        formed(entries).keys.compactMap { saved.series[$0] }
+        formed(entries).keys.compactMap { id -> FilmCollection? in
+            guard id.hasPrefix("show:") else { return saved.series[id] }
+            let first = entries.filter { $0.isShow && $0.posterKey == id }.min { ($0.season ?? 1) < ($1.season ?? 1) }
+            return first.map { FilmCollection(id: id, name: $0.title, members: [], fetched: .distantPast) }
+        }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     /// Your films of a series, in the series' order (ones Wikidata's list missed go in by year).
     func lineup(_ c: FilmCollection, entries: [LibraryEntry]) -> [LibraryEntry] {
+        if c.isShow {
+            return entries.filter { seriesID($0) == c.id }.sorted { ($0.season ?? 1, $0.title) < ($1.season ?? 1, $1.title) }
+        }
         let place = Dictionary(c.members.enumerated().map { ($1.qid, $0) }, uniquingKeysWith: { a, _ in a })
         func key(_ e: LibraryEntry) -> (Int, Int) {
             if let q = saved.filmQID[e.posterKey], let i = place[q] { return (c.members[i].year ?? e.year ?? 0, i) }

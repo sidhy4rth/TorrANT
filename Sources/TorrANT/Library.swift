@@ -463,10 +463,19 @@ struct LibraryView: View {
     /// All and Movies show one cover per collection instead (user, 15 Nov night: less clutter).
     private var mainShelf: [LibraryEntry] { store.entries.filter { !collections.inCollection($0, among: store.entries) } }
 
-    /// The collection covers for this tab: All and Movies, when not searching.
-    private var covers: [FilmCollection] {
-        guard filter == .all || filter == .movies, query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return collections.collections(in: store.entries)
+    /// The collection covers for this tab, when not searching: All has every one, Movies the
+    /// film series, Shows the shows with 2+ seasons (one cover for all of Game of Thrones).
+    private var covers: [FilmCollection] { covers(for: filter) }
+
+    private func covers(for f: Filter) -> [FilmCollection] {
+        guard query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
+        let all = collections.collections(in: store.entries)
+        switch f {
+        case .all: return all
+        case .movies: return all.filter { !$0.isShow }
+        case .shows: return all.filter(\.isShow)
+        case .unwatched, .collections: return []
+        }
     }
 
     private var visible: [LibraryEntry] {
@@ -546,9 +555,10 @@ struct LibraryView: View {
     private func count(_ f: Filter) -> String {
         let n: Int
         switch f {
-        case .all: n = mainShelf.count
-        case .movies: n = mainShelf.filter { !$0.isShow }.count
-        case .shows: n = store.shows.count
+        // What's on the shelf: titles plus one per collection cover.
+        case .all: n = mainShelf.count + covers(for: .all).count
+        case .movies: n = mainShelf.filter { !$0.isShow }.count + covers(for: .movies).count
+        case .shows: n = mainShelf.filter(\.isShow).count + covers(for: .shows).count
         case .unwatched: n = mainShelf.filter { e in e.isShow ? e.episodes.contains { !log.finished($0.lastPathComponent) } : !log.finished(e.url.lastPathComponent) }.count
         case .collections: n = collections.collections(in: store.entries).count
         }
@@ -600,6 +610,13 @@ struct LibraryView: View {
     }
 }
 
+extension WatchLog {
+    /// A film you finished, or a season with every episode finished.
+    func done(_ e: LibraryEntry) -> Bool {
+        e.isShow ? !e.episodes.isEmpty && e.episodes.allSatisfy { finished($0.lastPathComponent) } : finished(e.url.lastPathComponent)
+    }
+}
+
 /// The Collections tab: one shelf per film series, in release order. Films you have play like
 /// anywhere else; the ones you don't have yet stand dimmed in their place ("3 of 8").
 private struct CollectionShelves: View {
@@ -615,7 +632,7 @@ private struct CollectionShelves: View {
         if list.isEmpty {
             VStack(spacing: 8) {
                 Text("No collections yet.").font(Theme.display(20))
-                Text("When two or more films from the same series are in your Library, they're kept here, in order.")
+                Text("When two or more films from the same series, or seasons of the same show, are in your Library, they're kept here, in order.")
                     .font(Theme.body(14)).foregroundStyle(Theme.muted)
             }
             .frame(maxWidth: .infinity).padding(.top, 40)
@@ -628,17 +645,18 @@ private struct CollectionShelves: View {
 
     private func shelf(_ c: FilmCollection) -> some View {
         let line = collections.lineup(c, entries: entries)
-        let seen = line.filter { log.finished($0.url.lastPathComponent) }.count
-        let next = line.first { !log.finished($0.url.lastPathComponent) }
+        let seen = line.filter { log.done($0) }.count
+        let next = line.first { !log.done($0) }
+        let nextName = next.map { c.isShow ? "Season \($0.season ?? 1)" : $0.title } ?? ""
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(c.name).font(Theme.display(22))
-                Text("\(line.count) films" + (seen > 0 ? " · \(seen) watched" : ""))
+                Text(c.count(line.count) + (seen > 0 ? " · \(seen) watched" : ""))
                     .font(Theme.body(13)).foregroundStyle(Theme.muted)
                 Spacer()
                 if let next {
                     Button { play(next) } label: {
-                        Label(seen > 0 ? "Next: \(next.title)" : "Start with \(next.title)", systemImage: "play.fill")
+                        Label(seen > 0 ? "Next: \(nextName)" : "Start with \(nextName)", systemImage: "play.fill")
                             .lineLimit(1)
                     }
                     .buttonStyle(RedButtonStyle())
@@ -897,7 +915,7 @@ private struct CollectionCover: View {
 
     var body: some View {
         let line = Collections.shared.lineup(collection, entries: store.entries)
-        let seen = line.filter { log.finished($0.url.lastPathComponent) }.count
+        let seen = line.filter { log.done($0) }.count
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
                 // Two cards peeking out behind: it's a set, not one film.
@@ -915,7 +933,7 @@ private struct CollectionCover: View {
                     .overlay { if let first = line.first { PosterImage(entry: first) } }
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(alignment: .bottomLeading) {
-                        Label("\(line.count) films", systemImage: "square.stack.fill")
+                        Label(collection.count(line.count), systemImage: "square.stack.fill")
                             .font(Theme.body(12, .semibold))
                             .foregroundStyle(Theme.onAccent)
                             .padding(.horizontal, 10).padding(.vertical, 5)
