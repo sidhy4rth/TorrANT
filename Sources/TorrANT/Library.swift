@@ -426,11 +426,13 @@ struct LibraryView: View {
                         let list = visible
                         if filter == .collections {
                             CollectionShelves(entries: list, open: open, play: play)
-                        } else if list.isEmpty {
+                        } else if list.isEmpty && covers.isEmpty {
                             Text("Nothing matches.").font(Theme.body(15)).foregroundStyle(Theme.muted)
                                 .frame(maxWidth: .infinity).padding(.top, 30)
                         } else {
-                            Shelves(entries: list, open: open, play: play)
+                            Shelves(entries: list, covers: covers, open: open, play: play) { _ in
+                                withAnimation(.easeInOut(duration: 0.25)) { filter = .collections }
+                            }
                         }
                     }
                     .padding(.horizontal, 22).padding(.top, 16).padding(.bottom, 26)
@@ -452,9 +454,15 @@ struct LibraryView: View {
 
     // MARK: Filtering and sorting
 
-    /// Every title, collection films included: they're shelved in the Library and also kept
-    /// together, in order, on the Collections tab (user, 15 Nov night: "shelf it on the library too").
-    private var mainShelf: [LibraryEntry] { store.entries }
+    /// Films that belong to a collection live on the Collections tab (search still finds them);
+    /// All and Movies show one cover per collection instead (user, 15 Nov night: less clutter).
+    private var mainShelf: [LibraryEntry] { store.entries.filter { !collections.inCollection($0, among: store.entries) } }
+
+    /// The collection covers for this tab: All and Movies, when not searching.
+    private var covers: [FilmCollection] {
+        guard filter == .all || filter == .movies, query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
+        return collections.collections(in: store.entries)
+    }
 
     private var visible: [LibraryEntry] {
         let q = query.trimmingCharacters(in: .whitespaces)
@@ -650,15 +658,26 @@ private struct CollectionShelves: View {
 /// Posters standing on shelves, a row per shelf; they rise in one after another.
 private struct Shelves: View {
     let entries: [LibraryEntry]
+    var covers: [FilmCollection] = []
     let open: (LibraryEntry) -> Void
     let play: (LibraryEntry) -> Void
+    var openCollection: (FilmCollection) -> Void = { _ in }
     @State private var width: CGFloat = 1000
     private let gap: CGFloat = 18
+
+    /// A spot on the shelf: a title, or a collection's cover (collections stand first).
+    private enum Item: Identifiable {
+        case title(LibraryEntry), cover(FilmCollection)
+        var id: String {
+            switch self { case .title(let e): "t:\(e.id)"; case .cover(let c): "c:\(c.id)" }
+        }
+    }
 
     var body: some View {
         let cols = max(4, Int((width + gap) / (150 + gap)))
         let colW = (width - gap * CGFloat(cols - 1)) / CGFloat(cols)
-        let rows = stride(from: 0, to: entries.count, by: cols).map { Array(entries[$0..<min($0 + cols, entries.count)]) }
+        let items = covers.map(Item.cover) + entries.map(Item.title)
+        let rows = stride(from: 0, to: items.count, by: cols).map { Array(items[$0..<min($0 + cols, items.count)]) }
         VStack(alignment: .leading, spacing: 26) {
             ForEach(Array(rows.enumerated()), id: \.offset) { r, row in
                 ZStack(alignment: .topLeading) {
@@ -666,9 +685,15 @@ private struct Shelves: View {
                         .frame(width: width, height: 8)
                         .offset(y: colW * 1.5 - 2)
                     HStack(alignment: .top, spacing: gap) {
-                        ForEach(Array(row.enumerated()), id: \.element.id) { i, e in
-                            PosterCard(entry: e, order: r * cols + i) { open(e) } play: { play(e) }
-                                .frame(width: colW)
+                        ForEach(Array(row.enumerated()), id: \.element.id) { i, item in
+                            switch item {
+                            case .title(let e):
+                                PosterCard(entry: e, order: r * cols + i) { open(e) } play: { play(e) }
+                                    .frame(width: colW)
+                            case .cover(let c):
+                                CollectionCover(collection: c, order: r * cols + i) { openCollection(c) }
+                                    .frame(width: colW)
+                            }
                         }
                     }
                 }
@@ -851,6 +876,67 @@ struct PosterImage: View {
             }
         }
         .clipped()
+    }
+}
+
+/// One card standing for a whole collection on All and Movies: the first film's poster on a
+/// little stack, the series name and how many films. Clicking it opens the Collections tab.
+private struct CollectionCover: View {
+    let collection: FilmCollection
+    var order: Int = 0
+    let action: () -> Void
+    @State private var hover = false
+    @State private var shown = false
+    @State private var log = WatchLog.shared
+    @State private var store = LibraryStore.shared
+
+    var body: some View {
+        let line = Collections.shared.lineup(collection, entries: store.entries)
+        let seen = line.filter { log.finished($0.url.lastPathComponent) }.count
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack {
+                // Two cards peeking out behind: it's a set, not one film.
+                ForEach([2, 1], id: \.self) { k in
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Theme.surface2)
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.line, lineWidth: 1))
+                        .aspectRatio(2 / 3, contentMode: .fit)
+                        .scaleEffect(1 - CGFloat(k) * 0.05)
+                        .offset(y: -CGFloat(k) * 7)
+                }
+                Color.clear
+                    .aspectRatio(2 / 3, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .overlay { if let first = line.first { PosterImage(entry: first) } }
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(alignment: .bottomLeading) {
+                        Label("\(line.count) films", systemImage: "square.stack.fill")
+                            .font(Theme.body(12, .semibold))
+                            .foregroundStyle(Theme.onAccent)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(Capsule().fill(Theme.redFill))
+                            .padding(8)
+                    }
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(hover ? Theme.red : Theme.line, lineWidth: hover ? 2 : 1))
+            }
+            .scaleEffect(hover ? 1.045 : 1)
+            .offset(y: hover ? -7 : 0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.72), value: hover)
+            Text(collection.name).font(Theme.body(14, .semibold)).lineLimit(1)
+            Text("Collection" + (seen > 0 ? " · \(seen) of \(line.count) watched" : ""))
+                .font(Theme.body(12)).foregroundStyle(Theme.muted).lineLimit(1)
+        }
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .onTapGesture(perform: action)
+        .help("Open the \(collection.name) collection")
+        .opacity(shown ? 1 : 0)
+        .offset(y: shown ? 0 : 16)
+        .onAppear {
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.82).delay(Double(min(order, 24)) * 0.035)) { shown = true }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 }
 
