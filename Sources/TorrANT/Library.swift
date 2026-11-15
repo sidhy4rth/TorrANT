@@ -205,6 +205,7 @@ final class LibraryStore {
     func retryMissing() async {
         for (k, v) in tried where v.isEmpty { tried[k] = nil; names[k] = nil; missedAt[k] = nil }
         TitleInfo.shared.retryMisses()
+        if await Uploader.shared.refreshIndex() { return }
         await refresh()
     }
 
@@ -232,7 +233,7 @@ final class LibraryStore {
             await TitleInfo.shared.fetch(entries)
             return
         }
-        guard let root = Colony.shared.driveDir else { entries = []; scanned = true; return }
+        let root = Colony.shared.libraryRoot
         var found = await Task.detached(priority: .utility) { LibraryStore.scan(root) }.value
         for i in found.indices { if let n = names[found[i].posterKey] { found[i].title = n } }
         if found != entries { entries = found }
@@ -242,6 +243,24 @@ final class LibraryStore {
     }
 
     nonisolated static func scan(_ root: URL) -> [LibraryEntry] {
+        // Google's own list when we have it: real names, and "added" = when it reached Drive.
+        if let top = DriveIndex.shared.list(root) {
+            var out: [LibraryEntry] = []
+            for t in top {
+                guard let u = DriveIndex.shared.url(t.path) else { continue }
+                let p = Titles.parse(u.lastPathComponent)
+                if t.isDir {
+                    let eps = Streamer.episodes(in: u)
+                    guard !eps.isEmpty else { continue }
+                    let show = p.season != nil || eps.count > 1
+                    out.append(LibraryEntry(url: u, isShow: show, title: p.title, year: p.year, season: p.season ?? 1,
+                                            episodes: show ? eps : [], added: t.added))
+                } else if Streamer.isVideo(u) {
+                    out.append(LibraryEntry(url: u, isShow: false, title: p.title, year: p.year, season: nil, episodes: [], added: t.added))
+                }
+            }
+            return out.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        }
         let fm = FileManager.default
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .addedToDirectoryDateKey, .creationDateKey]
         let top = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])) ?? []
@@ -379,8 +398,8 @@ struct LibraryView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            if Colony.shared.driveDir == nil {
-                empty("Google Drive isn't set up.", "Install Google Drive for desktop and sign in.")
+            if Colony.shared.driveDir == nil && !Uploader.shared.ready {
+                empty("Google Drive isn't set up.", "Sign in to Google on the Drive page.")
             } else if store.entries.isEmpty {
                 empty(store.scanned ? "Nothing in the Library yet." : "Opening the Library…",
                       "Things you send to Google Drive show up here, ready to stream.")

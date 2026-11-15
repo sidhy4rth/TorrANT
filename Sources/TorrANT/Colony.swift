@@ -51,6 +51,10 @@ final class Colony {
         return Colony.findDrive()?.appendingPathComponent(Uploader.folder, isDirectory: true)
     }
 
+    /// Where the Library's files live: the Drive app's folder if it's installed, otherwise a
+    /// stand-in path of the same shape (DriveIndex knows what's really in Drive either way).
+    var libraryRoot: URL { driveDir ?? DriveIndex.standIn }
+
     /// Only encrypted peer connections (fewer people, but harder for a provider to slow down).
     var requireCrypto: Bool = UserDefaults.standard.bool(forKey: "btRequireCrypto") {
         didSet {
@@ -628,6 +632,7 @@ final class Colony {
 
     func isOnDrive(_ item: HillItem) -> Bool {
         if let d = driveDir, item.path.hasPrefix(d.path + "/") { return true }
+        if item.path.hasPrefix(DriveIndex.standIn.path + "/") { return true }
         return item.path.contains("/Library/CloudStorage/GoogleDrive-")
     }
 
@@ -686,6 +691,10 @@ final class Colony {
             } else if rescued, Date().timeIntervalSince(lastRetry) > 900 {
                 lastRetry = Date()
                 await retryUnfinishedUploads()
+            }
+            // Google's own list of the Library: at launch, then every 5 minutes.
+            if Uploader.shared.ready, DriveIndex.shared.age > 300, !NetWatch.shared.metered || !DriveIndex.shared.loaded {
+                await Uploader.shared.refreshIndex()
             }
             relinkRenamedDriveItems()
             if let dir = driveDir {

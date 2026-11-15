@@ -10,7 +10,7 @@ import Foundation
 @MainActor @Observable
 final class Uploader {
     static let shared = Uploader()
-    static let folder = "TorrANT Library"
+    nonisolated static let folder = "TorrANT Library"
 
     struct Job: Identifiable, Equatable {
         let id = UUID()
@@ -102,11 +102,16 @@ final class Uploader {
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: local.path, isDirectory: &isDir) else { return false }
         let name = local.lastPathComponent
+        // 32 MB pieces for files already on the Mac: each piece waits for Google's reply before
+        // the next goes, so 8 MB spent much of its time waiting. Measured 15 Nov on home Wi-Fi,
+        // one 256 MB file: 8M 7.5 / 6.4 MB/s, 32M 9.3, 64M 8.9 / 8.4, 128M 8.1. A dropped
+        // connection still only resends one piece. (Links keep 8 MB: see ensureDaemon.)
+        let drive = "drive,chunk_size=32M:"
         let params: [String: Any] = isDir.boolValue
-            ? ["srcFs": local.path, "dstFs": "drive:\(Uploader.folder)/\(name)",
+            ? ["srcFs": local.path, "dstFs": "\(drive)\(Uploader.folder)/\(name)",
                "deleteEmptySrcDirs": true, "_async": true]
             : ["srcFs": local.deletingLastPathComponent().path, "srcRemote": name,
-               "dstFs": "drive:", "dstRemote": "\(Uploader.folder)/\(name)", "_async": true]
+               "dstFs": drive, "dstRemote": "\(Uploader.folder)/\(name)", "_async": true]
         let r = await call(isDir.boolValue ? "sync/move" : "operations/movefile", params)
         guard let id = r?["jobid"] as? Int else {
             Colony.shared.say("Couldn't start uploading \(name)")
@@ -166,6 +171,7 @@ final class Uploader {
                 // Only call it done once Drive itself shows the file in the folder.
                 if ok { ok = await confirmInDrive(name, size: size) }
                 if ok {
+                    Task { await self.refreshIndex() }
                     Colony.shared.say("\(name) is in Google Drive ✓ Nothing left on this Mac")
                     PhoneLink.shared.announceReady(name)
                 } else if (st["success"] as? Bool) == true {
@@ -180,6 +186,22 @@ final class Uploader {
             }
         }
     }
+
+    /// Reads the whole TorrANT Library from Google (names, sizes, when each arrived) into
+    /// DriveIndex, then lets the Library pick up anything new.
+    @discardableResult
+    func refreshIndex() async -> Bool {
+        guard ready, !indexing, await ensureDaemon() else { return false }
+        indexing = true
+        defer { indexing = false }
+        guard let r = await call("operations/list", ["fs": "drive:\(Uploader.folder)", "remote": "",
+                                                     "opt": ["recurse": true, "metadata": true]], timeout: 60),
+              let list = r["list"] as? [[String: Any]] else { return false }
+        DriveIndex.shared.load(list, root: Colony.shared.libraryRoot)
+        await LibraryStore.shared.refresh()
+        return true
+    }
+    @ObservationIgnored private var indexing = false
 
     /// Looks the file (or folder) up in TorrANT Library and checks the size where known.
     private func confirmInDrive(_ name: String, size: Double) async -> Bool {
@@ -241,9 +263,9 @@ final class Uploader {
         return false
     }
 
-    private func call(_ method: String, _ params: [String: Any]) async -> [String: Any]? {
+    private func call(_ method: String, _ params: [String: Any], timeout: TimeInterval = 10) async -> [String: Any]? {
         guard port > 0, let url = URL(string: "http://127.0.0.1:\(port)/\(method)") else { return nil }
-        var req = URLRequest(url: url, timeoutInterval: 10)
+        var req = URLRequest(url: url, timeoutInterval: timeout)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Basic " + Data("ant:\(pass)".utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")

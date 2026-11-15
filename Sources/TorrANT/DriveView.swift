@@ -119,7 +119,7 @@ final class DriveWatcher {
     }
 
     func scan() async {
-        guard let dir = Colony.shared.driveDir else { items = []; scanned = true; return }
+        let dir = Colony.shared.libraryRoot
         let entries = await Task.detached(priority: .utility) { DriveWatcher.read(dir) }.value
 
         // Live progress only exists while a file is still going up.
@@ -201,7 +201,27 @@ final class DriveWatcher {
         }
     }
 
+    /// Google's list of the folder (DriveIndex) for everything that's safely in Drive, plus,
+    /// from the Drive app's folder, only what that app is still uploading.
     nonisolated private static func read(_ dir: URL) -> [EntryStat] {
+        var out = readDisk(dir)
+        guard let top = DriveIndex.shared.list(dir) else { return out }
+        out = out.filter { e in e.files.contains { !$0.uploaded } }
+        let have = Set(out.map { $0.url.lastPathComponent })
+        for t in top {
+            guard let u = DriveIndex.shared.url(t.path), !have.contains(u.lastPathComponent) else { continue }
+            let files = t.isDir ? (DriveIndex.shared.files(under: u) ?? []) : [t]
+            let stats: [FileStat] = files.compactMap { f in
+                guard let fu = DriveIndex.shared.url(f.path) else { return nil }
+                let onMac = Int64((try? fu.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0)
+                return FileStat(path: fu.path, size: f.size, uploaded: true, uploading: false, onMac: onMac, problem: nil)
+            }
+            out.append(EntryStat(url: u, isFolder: t.isDir, date: t.added, files: stats))
+        }
+        return out
+    }
+
+    nonisolated private static func readDisk(_ dir: URL) -> [EntryStat] {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey,
                                       .ubiquitousItemIsUploadedKey, .ubiquitousItemIsUploadingKey,
@@ -306,7 +326,7 @@ struct DriveView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            if colony.driveDir == nil {
+            if colony.driveDir == nil && !Uploader.shared.ready {
                 noDrive
             } else {
                 VStack(alignment: .leading, spacing: 16) {
@@ -699,6 +719,8 @@ struct DriveRow: View {
         return "\(Fmt.bytes(item.onMac)) on this Mac"
     }
 
+    private var inDriveApp: Bool { FileManager.default.fileExists(atPath: item.url.path) }
+
     private var controls: some View {
         HStack(spacing: 6) {
             if item.isFolder {
@@ -707,12 +729,15 @@ struct DriveRow: View {
                 }
             }
             iconButton("play.fill", item.isFolder ? "Play the season in VLC (streams)" : "Play in VLC (streams)") { play() }
-            if item.uploaded && !item.cloudOnly {
-                iconButton("externaldrive.badge.minus", "Free up space on this Mac") { Task { await watcher.freeUp([item]) } }
-            } else if item.cloudOnly {
-                iconButton("arrow.down.to.line", "Download to this Mac for offline") { Task { await watcher.download(item) } }
+            // Free up / download / Finder need the Google Drive app's copy of the file.
+            if inDriveApp {
+                if item.uploaded && !item.cloudOnly {
+                    iconButton("externaldrive.badge.minus", "Free up space on this Mac") { Task { await watcher.freeUp([item]) } }
+                } else if item.cloudOnly {
+                    iconButton("arrow.down.to.line", "Download to this Mac for offline") { Task { await watcher.download(item) } }
+                }
+                iconButton("magnifyingglass", "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
             }
-            iconButton("magnifyingglass", "Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
         }
         .opacity(hover ? 1 : 0.35)
         .disabled(watcher.busy.contains(item.id))
@@ -732,13 +757,15 @@ struct DriveRow: View {
 
     @ViewBuilder private var menu: some View {
         Button(item.isFolder ? "Play the season" : "Play") { play() }
-        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
-        Divider()
-        if item.uploaded && !item.cloudOnly {
-            Button("Free up space on this Mac") { Task { await watcher.freeUp([item]) } }
-        }
-        if !item.fullyOnMac {
-            Button("Download to this Mac for offline") { Task { await watcher.download(item) } }
+        if inDriveApp {
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+            Divider()
+            if item.uploaded && !item.cloudOnly {
+                Button("Free up space on this Mac") { Task { await watcher.freeUp([item]) } }
+            }
+            if !item.fullyOnMac {
+                Button("Download to this Mac for offline") { Task { await watcher.download(item) } }
+            }
         }
     }
 }

@@ -22,7 +22,7 @@ final class HomeShare {
 
     func start() {
         guard on, proc?.isRunning != true, Streamer.shared.state == .ready, let rclone = Streamer.shared.rclone,
-              let dir = Colony.shared.driveDir,
+              case let dir = Colony.shared.libraryRoot,
               let rel = Streamer.pathInDrive(dir.appendingPathComponent("x"))?.split(separator: "/").dropLast().joined(separator: "/")
         else { return }
         // Its own cache folder: two rclone processes must not share one.

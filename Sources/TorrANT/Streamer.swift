@@ -183,10 +183,11 @@ final class Streamer {
         warming = true
         Task {
             defer { warming = false }
-            guard await startServer(), let dir = Colony.shared.driveDir else { return }
+            guard await startServer() else { return }
+            let dir = Colony.shared.libraryRoot
             let videos = await Task.detached(priority: .utility) {
                 Streamer.episodes(in: dir).map { u in
-                    (u, Int64((try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0))
+                    (u, DriveIndex.shared.entry(u)?.size ?? Int64((try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0))
                 }
             }.value
             let todo = videos.filter { !preloaded.contains($0.0.path) && $0.1 > 16_000_000 && !Streamer.isOnMac($0.0) }
@@ -395,7 +396,9 @@ final class Streamer {
         let dir = video.deletingLastPathComponent()
         let stem = video.deletingPathExtension().lastPathComponent
         func list(_ d: URL) -> [URL] {
-            (try? fm.contentsOfDirectory(at: d, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+            if let known = DriveIndex.shared.list(d) { return known.compactMap { DriveIndex.shared.url($0.path) } }
+            if DriveIndex.shared.loaded, DriveIndex.shared.relative(d) != nil { return [] }   // not in Drive
+            return (try? fm.contentsOfDirectory(at: d, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
         }
         let only = list(dir).filter(isVideo).count == 1
         func subs(_ d: URL, anyName: Bool) -> [URL] {
@@ -439,6 +442,11 @@ final class Streamer {
     }
 
     nonisolated static func episodes(in folder: URL) -> [URL] {
+        if let all = DriveIndex.shared.files(under: folder) {
+            return all.compactMap { DriveIndex.shared.url($0.path) }.filter(isVideo)
+                .filter { !$0.pathComponents.suffix(2).contains { $0.lowercased().hasPrefix("sample") } }
+                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        }
         guard let e = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return [] }
         return e.compactMap { $0 as? URL }.filter(isVideo)
             .filter { !$0.pathComponents.suffix(2).contains { $0.lowercased().hasPrefix("sample") } }  // skip sample clips
