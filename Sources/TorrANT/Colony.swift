@@ -578,7 +578,16 @@ final class Colony {
 
     /// Moves a finished download into Google Drive, then points the Anthill at its new home.
     func moveToDrive(_ item: HillItem) async {
-        guard carrying[item.id] == nil, unpacking[item.id] == nil, !isOnDrive(item) else { return }
+        guard carrying[item.id] == nil, unpacking[item.id] == nil, !sendingUp.contains(item.id), !isOnDrive(item) else { return }
+        // rclone first: it uploads in 8 MB pieces and retries only the piece that failed.
+        // Google Drive for desktop restarts a whole file from 0 after any 5-second network
+        // stall, so big movies (18-21 GB, 15 Nov) never finished on a Wi-Fi that drops now and then.
+        if Uploader.shared.ready {
+            sendingUp.insert(item.id)
+            await autoSend(item)
+            sendingUp.remove(item.id)
+            return
+        }
         guard driveDir != nil else { say(Colony.noDriveNote); return }
         await stopSeeding(item.path)
         // A .zip can't be streamed from Drive, so send the episodes instead.
@@ -607,15 +616,56 @@ final class Colony {
     /// True while something in the Drive folder hasn't finished uploading.
     /// Checked every few seconds, so keep-awake covers Drive uploads too.
     @ObservationIgnored private var driveBusy = false
+    @ObservationIgnored private var sendingUp: Set<UUID> = []
+    @ObservationIgnored private var rescued = false
 
     private func watchDriveForever() async {
         while true {
+            if !rescued, Uploader.shared.ready {
+                rescued = true
+                await rescueStuckDriveUploads()
+            }
             if let dir = driveDir {
                 driveBusy = await Task.detached(priority: .utility) { Colony.anythingUploading(dir) }.value
             } else {
                 driveBusy = false
             }
             try? await Task.sleep(for: .seconds(5))
+        }
+    }
+
+    /// Anthill items sitting in the Drive folder that Google Drive for desktop still hasn't
+    /// uploaded: take them back out (a rename, no copy) and let rclone send them instead.
+    func rescueStuckDriveUploads() async {
+        guard let dir = driveDir else { return }
+        let stuck = hill.filter { item in
+            guard isOnDrive(item), !sendingUp.contains(item.id) else { return false }
+            let u = URL(fileURLWithPath: item.path)
+            guard FileManager.default.fileExists(atPath: u.path) else { return false }
+            var isDir: ObjCBool = false
+            FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir)
+            if isDir.boolValue { return Colony.anythingUploading(u) }
+            return (try? u.resourceValues(forKeys: [.ubiquitousItemIsUploadedKey]))?.ubiquitousItemIsUploaded == false
+        }
+        for item in stuck {
+            let src = URL(fileURLWithPath: item.path)
+            guard src.path.hasPrefix(dir.path + "/") else { continue }
+            var dest = downloadDir.appendingPathComponent(src.lastPathComponent)
+            if FileManager.default.fileExists(atPath: dest.path) {
+                dest = downloadDir.appendingPathComponent("\(src.deletingPathExtension().lastPathComponent) (to Drive)" + (src.pathExtension.isEmpty ? "" : ".\(src.pathExtension)"))
+            }
+            do {
+                try FileManager.default.moveItem(at: src, to: dest)
+            } catch {
+                say("Couldn't take \(item.name) back from Google Drive: \(error.localizedDescription)")
+                continue
+            }
+            guard let i = hill.firstIndex(where: { $0.id == item.id }) else { continue }
+            hill[i].path = dest.path
+            saveHill()
+            say("Google Drive kept restarting \(item.name), so the ants are flying it up themselves")
+            let moved = hill[i]
+            Task { await self.moveToDrive(moved) }
         }
     }
 
@@ -944,8 +994,11 @@ final class Colony {
             } else if Colony.isZip(path) {
                 let id = UUID()
                 if let folder = await unpackZip(u, id: id, name: u.lastPathComponent) {
-                    _ = await carry(folder, name: folder.lastPathComponent, id: id)
+                    if Uploader.shared.ready { _ = await Uploader.shared.sendFile(folder) }
+                    else { _ = await carry(folder, name: folder.lastPathComponent, id: id) }
                 }
+            } else if Uploader.shared.ready {
+                _ = await Uploader.shared.sendFile(u)
             } else {
                 _ = await carry(u, name: u.lastPathComponent, id: UUID())
             }

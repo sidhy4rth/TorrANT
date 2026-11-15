@@ -192,7 +192,21 @@ final class Uploader {
 
     // MARK: rclone control server
 
+    /// One start at a time: two uploads asking together (15 Nov, the stuck-upload rescue)
+    /// each launched their own rclone, and jobs could land on the one TorrANT wasn't watching.
+    @ObservationIgnored private var starting: Task<Bool, Never>?
+
     private func ensureDaemon() async -> Bool {
+        if let d = daemon, d.isRunning { return true }
+        if let s = starting { return await s.value }
+        let t = Task { await startDaemon() }
+        starting = t
+        let ok = await t.value
+        starting = nil
+        return ok
+    }
+
+    private func startDaemon() async -> Bool {
         if let d = daemon, d.isRunning { return true }
         guard let rclone = Streamer.shared.rclone else { return false }
         for _ in 0..<5 {
@@ -209,7 +223,10 @@ final class Uploader {
                            // can be hundreds of tiny ones and Drive takes ~1 s to file each.
                            // At 2 at a time, 692 small files took over 15 minutes (8 Nov).
                            "--transfers", "8", "--checkers", "16",
-                           "--retries", "5", "--low-level-retries", "20"]
+                           // A failed 8 MB piece is retried on its own (low-level retry) before
+                           // the whole file starts over. 20 rode out ~40 s of no network; the
+                           // Wi-Fi here drops for up to 2 min (15 Nov), so allow ~10 min.
+                           "--retries", "5", "--low-level-retries", "300"]
             p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
             do { try p.run() } catch { continue }
             for _ in 0..<40 {
