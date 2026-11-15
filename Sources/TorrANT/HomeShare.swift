@@ -25,13 +25,24 @@ final class HomeShare {
               case let dir = Colony.shared.libraryRoot,
               let rel = Streamer.pathInDrive(dir.appendingPathComponent("x"))?.split(separator: "/").dropLast().joined(separator: "/")
         else { return }
+        // With a shared drive, TVs see both libraries as two folders; otherwise just My Drive's.
+        var source = "\(Streamer.combined):\(rel)"
+        var env = Streamer.combinedEnv()
+        if let shared = Uploader.shared.sharedDrive {
+            env["RCLONE_CONFIG_TORRANTLIB_TYPE"] = "combine"
+            let mine = rel.split(separator: "/").dropFirst().joined(separator: "/")   // drop "My Drive"
+            env["RCLONE_CONFIG_TORRANTLIB_UPSTREAMS"] =
+                "\"My Drive=drive:\(mine)\" \"\(shared.name.replacingOccurrences(of: "\"", with: ""))=\(Uploader.fs(shared))\(Uploader.folder)\""
+            source = "torrantlib:"
+        }
         // Its own cache folder: two rclone processes must not share one.
         let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TorrANT/home-share")
         let log = support.appendingPathComponent("rclone-dlna.log")
         FileManager.default.createFile(atPath: log.path, contents: nil)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: rclone)
-        p.arguments = ["serve", "dlna", "drive:\(rel)", "--config", support.appendingPathComponent("rclone.conf").path,
+        p.environment = env
+        p.arguments = ["serve", "dlna", source, "--config", support.appendingPathComponent("rclone.conf").path,
                        "--name", shareName, "--addr", ":7879", "--read-only",
                        "--vfs-cache-mode", "full", "--cache-dir", cache.path, "--vfs-cache-max-size", "1G",
                        "--vfs-cache-max-age", "24h", "--vfs-read-ahead", "48M",
@@ -50,6 +61,13 @@ final class HomeShare {
 
     func stop() {
         proc?.terminate(); proc = nil; running = false
+    }
+
+    /// Picks up a shared drive added or removed while sharing.
+    func restart() {
+        guard running || proc?.isRunning == true else { return }
+        stop()
+        Task { try? await Task.sleep(for: .milliseconds(600)); start() }
     }
 }
 

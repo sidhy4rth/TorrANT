@@ -12,7 +12,15 @@ import Foundation
 /// Drive app's folder when it's installed, otherwise a stand-in path of the same shape,
 /// so Streamer.pathInDrive turns either into the right streaming link.
 final class DriveIndex: @unchecked Sendable {
-    static let shared = DriveIndex()
+    static let shared = DriveIndex()     // My Drive's TorrANT Library
+    static let team = DriveIndex()       // the shared drive's TorrANT Library (Uploader.sharedDrive)
+
+    /// The list a file or folder belongs to, by where its URL lives.
+    static func owning(_ url: URL) -> DriveIndex? {
+        if shared.relative(url) != nil { return shared }
+        if team.relative(url) != nil { return team }
+        return nil
+    }
 
     struct Entry: Sendable {
         let path: String      // inside TorrANT Library, "Show/S01E01.mkv"
@@ -38,7 +46,9 @@ final class DriveIndex: @unchecked Sendable {
         .appendingPathComponent(Uploader.folder, isDirectory: true)
 
     /// Swaps in a fresh listing (rclone lsjson / operations/list items, recursive, with metadata).
-    func load(_ list: [[String: Any]], root: URL) {
+    /// True when what's in the folder changed (something added, removed or resized).
+    @discardableResult
+    func load(_ list: [[String: Any]], root: URL) -> Bool {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let plain = ISO8601DateFormatter()
@@ -55,9 +65,16 @@ final class DriveIndex: @unchecked Sendable {
             let parent = (path as NSString).deletingLastPathComponent
             kids[parent, default: []].append(path)
         }
-        lock.withLock {
+        return lock.withLock {
+            let changed = !_loaded || entries.count != e.count || entries.contains { e[$0.key]?.size != $0.value.size }
             entries = e; children = kids; _root = root.standardizedFileURL; _loaded = true; _at = Date()
+            return changed
         }
+    }
+
+    /// Forgets everything (the shared drive was removed).
+    func clear() {
+        lock.withLock { entries = [:]; children = [:]; _root = nil; _loaded = false; _at = .distantPast }
     }
 
     /// Path inside TorrANT Library for a URL under `root`, or nil if it's somewhere else.

@@ -20,6 +20,7 @@ final class Uploader {
         var name: String
         let straight: Bool          // link → Drive, nothing on the Mac
         var keep = false            // copy up, the Mac file stays
+        var fs = "drive:"           // the drive it's going to (to check it arrived)
         var size: Double = 0
         var done: Double = 0
         var speed: Double = 0
@@ -27,6 +28,69 @@ final class Uploader {
     }
 
     var jobs: [Job] = []
+
+    // MARK: Where uploads go
+
+    /// A Google shared drive the Library also lives on (bought storage, 15 Nov), next to My Drive.
+    struct SharedDrive: Codable, Equatable, Hashable { let id: String; let name: String }
+
+    /// The shared drive in use, if any. Its "TorrANT Library" folder is read into the Library
+    /// alongside My Drive's; nonisolated so streaming paths can be worked out off the main thread.
+    nonisolated static var savedShared: SharedDrive? {
+        guard let d = UserDefaults.standard.data(forKey: "sharedDrive") else { return nil }
+        return try? JSONDecoder().decode(SharedDrive.self, from: d)
+    }
+    var sharedDrive: SharedDrive? = Uploader.savedShared {
+        didSet {
+            UserDefaults.standard.set(sharedDrive.flatMap { try? JSONEncoder().encode($0) }, forKey: "sharedDrive")
+            if sharedDrive == nil { uploadToShared = false }
+        }
+    }
+    /// True: new uploads go to the shared drive. False: My Drive.
+    var uploadToShared: Bool = UserDefaults.standard.bool(forKey: "uploadToShared") {
+        didSet { UserDefaults.standard.set(uploadToShared, forKey: "uploadToShared") }
+    }
+    /// Shared drives this Google account can use, for the picker on the Drive page.
+    var sharedDrives: [SharedDrive] = []
+
+    /// rclone's name for a drive: My Drive, or a shared drive by id.
+    nonisolated static func fs(_ shared: SharedDrive?, chunk: Bool = false) -> String {
+        var opts: [String] = []
+        if chunk { opts.append("chunk_size=32M") }
+        if let shared { opts.append("team_drive=\(shared.id)") }
+        return opts.isEmpty ? "drive:" : "drive," + opts.joined(separator: ",") + ":"
+    }
+    /// Where new uploads land.
+    var target: SharedDrive? { uploadToShared ? sharedDrive : nil }
+    var targetName: String { target?.name ?? "My Drive" }
+
+    func loadSharedDrives() async {
+        guard ready, await ensureDaemon(),
+              let r = await call("backend/command", ["command": "drives", "fs": "drive:"], timeout: 20),
+              let list = r["result"] as? [[String: Any]] else { return }
+        sharedDrives = list.compactMap { d in
+            guard let id = d["id"] as? String, let name = d["name"] as? String else { return nil }
+            return SharedDrive(id: id, name: name)
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        // Renamed on Google's side: keep the saved name in step (paths are built from it).
+        if let cur = sharedDrive, let now = sharedDrives.first(where: { $0.id == cur.id }), now.name != cur.name {
+            useShared(now, uploadHere: uploadToShared)
+        }
+    }
+
+    /// Picks the drive new uploads go to. Choosing a shared drive also adds it to the Library.
+    func useShared(_ d: SharedDrive?, uploadHere: Bool) {
+        let changed = d != sharedDrive
+        sharedDrive = d
+        uploadToShared = d != nil && uploadHere
+        guard changed else { return }
+        madeSharedFolder = false
+        if d == nil { DriveIndex.team.clear() }
+        Streamer.shared.restartServer()
+        HomeShare.shared.restart()
+        Task { await refreshIndex() }
+    }
+    @ObservationIgnored private var madeSharedFolder = false
 
     /// The switch: where new downloads end up.
     /// On unless you've chosen otherwise: keeping the Mac empty is what TorrANT is for.
@@ -84,15 +148,18 @@ final class Uploader {
         guard await ensureDaemon() else { return false }
         // With autoFilename, rclone ignores any folder in "remote", so the folder goes in "fs"
         // (found 8 Nov: a test file landed in the top of My Drive).
-        let r = await call("operations/copyurl", ["fs": "drive:\(Uploader.folder)", "remote": "", "url": link,
+        let dest = Uploader.fs(target)
+        let r = await call("operations/copyurl", ["fs": "\(dest)\(Uploader.folder)", "remote": "", "url": link,
                                                   "autoFilename": true, "_async": true])
         guard let id = r?["jobid"] as? Int else {
             Colony.shared.say("Couldn't send that link to Drive")
             return false
         }
         let guess = URL(string: link)?.lastPathComponent ?? link
-        jobs.append(Job(jobid: id, name: guess.isEmpty ? "Download" : guess, straight: true))
-        Colony.shared.say("Sending \(guess) straight to Google Drive")
+        var job = Job(jobid: id, name: guess.isEmpty ? "Download" : guess, straight: true)
+        job.fs = dest
+        jobs.append(job)
+        Colony.shared.say("Sending \(guess) straight to \(targetName)")
         startPolling()
         return true
     }
@@ -109,7 +176,7 @@ final class Uploader {
         // the next goes, so 8 MB spent much of its time waiting. Measured 15 Nov on home Wi-Fi,
         // one 256 MB file: 8M 7.5 / 6.4 MB/s, 32M 9.3, 64M 8.9 / 8.4, 128M 8.1. A dropped
         // connection still only resends one piece. (Links keep 8 MB: see ensureDaemon.)
-        let drive = "drive,chunk_size=32M:"
+        let drive = Uploader.fs(target, chunk: true)
         let params: [String: Any] = isDir.boolValue
             ? ["srcFs": local.path, "dstFs": "\(drive)\(Uploader.folder)/\(name)",
                "deleteEmptySrcDirs": !keepOnMac, "_async": true]
@@ -124,10 +191,11 @@ final class Uploader {
         }
         var job = Job(jobid: id, name: name, straight: false)
         job.keep = keepOnMac
+        job.fs = Uploader.fs(target)
         job.size = Double(isDir.boolValue ? Colony.folderBytes(local) : Int64((try? local.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0))
         jobs.append(job)
-        Colony.shared.say(keepOnMac ? "Copying \(name) up to Google Drive (the Mac copy stays)"
-                                    : "Flying \(name) up to Google Drive")
+        Colony.shared.say(keepOnMac ? "Copying \(name) up to \(targetName) (the Mac copy stays)"
+                                    : "Flying \(name) up to \(targetName)")
         startPolling()
         let ok = await withCheckedContinuation { waiters[id] = $0 }
         if ok && isDir.boolValue && !keepOnMac { try? FileManager.default.removeItem(at: local) }   // only empty folders left
@@ -175,9 +243,10 @@ final class Uploader {
                 let name = jobs[i].name
                 let size = jobs[i].size
                 let keep = jobs[i].keep
+                let fs = jobs[i].fs
                 jobs.remove(at: i)
                 // Only call it done once Drive itself shows the file in the folder.
-                if ok { ok = await confirmInDrive(name, size: size) }
+                if ok { ok = await confirmInDrive(name, size: size, fs: fs) }
                 if ok {
                     Task { await self.refreshIndex() }
                     Colony.shared.say(keep ? "\(name) is in Google Drive ✓ Your Mac copy stays"
@@ -206,15 +275,32 @@ final class Uploader {
         guard let r = await call("operations/list", ["fs": "drive:\(Uploader.folder)", "remote": "",
                                                      "opt": ["recurse": true, "metadata": true]], timeout: 60),
               let list = r["list"] as? [[String: Any]] else { return false }
-        DriveIndex.shared.load(list, root: Colony.shared.libraryRoot)
+        var changed = DriveIndex.shared.load(list, root: Colony.shared.libraryRoot)
+        // The shared drive's TorrANT Library too (made the first time, so a new drive lists empty).
+        if let shared = sharedDrive, let root = Colony.shared.sharedRoot {
+            let fs = Uploader.fs(shared)
+            if !madeSharedFolder, await call("operations/mkdir", ["fs": fs, "remote": Uploader.folder], timeout: 30) != nil {
+                madeSharedFolder = true
+            }
+            if let r2 = await call("operations/list", ["fs": "\(fs)\(Uploader.folder)", "remote": "",
+                                                       "opt": ["recurse": true, "metadata": true]], timeout: 60),
+               let list2 = r2["list"] as? [[String: Any]] {
+                if DriveIndex.team.load(list2, root: root) { changed = true }
+            }
+        } else {
+            DriveIndex.team.clear()
+        }
+        // The streaming server keeps folder listings for an hour and, serving both drives as
+        // one, doesn't hear about new files on its own (15 Nov: a new film gave "not found").
+        if changed { await Streamer.shared.forgetFolders() }
         await LibraryStore.shared.refresh()
         return true
     }
     @ObservationIgnored private var indexing = false
 
     /// Looks the file (or folder) up in TorrANT Library and checks the size where known.
-    private func confirmInDrive(_ name: String, size: Double) async -> Bool {
-        guard let r = await call("operations/stat", ["fs": "drive:\(Uploader.folder)", "remote": name]),
+    private func confirmInDrive(_ name: String, size: Double, fs: String) async -> Bool {
+        guard let r = await call("operations/stat", ["fs": "\(fs)\(Uploader.folder)", "remote": name]),
               let item = r["item"] as? [String: Any] else { return false }
         if (item["IsDir"] as? Bool) == true { return true }
         let got = (item["Size"] as? Double) ?? -1

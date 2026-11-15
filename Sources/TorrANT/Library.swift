@@ -233,8 +233,11 @@ final class LibraryStore {
             await TitleInfo.shared.fetch(entries)
             return
         }
-        let root = Colony.shared.libraryRoot
-        var found = await Task.detached(priority: .utility) { LibraryStore.scan(root) }.value
+        let roots = Colony.shared.libraryRoots
+        var found = await Task.detached(priority: .utility) {
+            roots.flatMap { LibraryStore.scan($0.root, index: $0.index) }
+                .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        }.value
         for i in found.indices { if let n = names[found[i].posterKey] { found[i].title = n } }
         if found != entries { entries = found }
         scanned = true
@@ -254,12 +257,12 @@ final class LibraryStore {
         return parsed.map { LibraryEntry(url: $0.0, isShow: false, title: $0.1.title, year: $0.1.year, season: nil, episodes: [], added: added) }
     }
 
-    nonisolated static func scan(_ root: URL) -> [LibraryEntry] {
+    nonisolated static func scan(_ root: URL, index: DriveIndex = .shared) -> [LibraryEntry] {
         // Google's own list when we have it: real names, and "added" = when it reached Drive.
-        if let top = DriveIndex.shared.list(root) {
+        if let top = index.list(root) {
             var out: [LibraryEntry] = []
             for t in top {
-                guard let u = DriveIndex.shared.url(t.path) else { continue }
+                guard let u = index.url(t.path) else { continue }
                 let p = Titles.parse(u.lastPathComponent)
                 if t.isDir {
                     let eps = Streamer.episodes(in: u)
@@ -274,6 +277,8 @@ final class LibraryStore {
             }
             return out.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         }
+        // The shared drive is only read from Google's list (no Drive-app folder to fall back on).
+        if index === DriveIndex.team { return [] }
         let fm = FileManager.default
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .addedToDirectoryDateKey, .creationDateKey]
         let top = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])) ?? []

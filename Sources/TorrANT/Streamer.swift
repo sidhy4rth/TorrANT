@@ -184,10 +184,10 @@ final class Streamer {
         Task {
             defer { warming = false }
             guard await startServer() else { return }
-            let dir = Colony.shared.libraryRoot
+            let dirs = Colony.shared.libraryRoots.map(\.root)
             let videos = await Task.detached(priority: .utility) {
-                Streamer.episodes(in: dir).map { u in
-                    (u, DriveIndex.shared.entry(u)?.size ?? Int64((try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0))
+                dirs.flatMap { Streamer.episodes(in: $0) }.map { u in
+                    (u, DriveIndex.owning(u)?.entry(u)?.size ?? Int64((try? u.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0))
                 }
             }.value
             let todo = videos.filter { !preloaded.contains($0.0.path) && $0.1 > 16_000_000 && !Streamer.isOnMac($0.0) }
@@ -295,11 +295,16 @@ final class Streamer {
     private func startServer() async -> Bool {
         if let s = server, s.isRunning { return true }
         guard let rclone else { Colony.shared.say("rclone isn't installed"); return false }
+        clearOldCache()
         for _ in 0..<5 {
             let tryPort = Int.random(in: 40000...60000)
             let p = Process()
             p.executableURL = URL(fileURLWithPath: rclone)
-            p.arguments = ["serve", "http", "drive:", "--config", config.path,
+            p.environment = Streamer.combinedEnv()
+            let ctl = Int.random(in: 40000...60000)
+            p.arguments = ["serve", "http", "\(Streamer.combined):", "--config", config.path,
+                           // A control port, only so TorrANT can say "the folders changed".
+                           "--rc", "--rc-addr", "127.0.0.1:\(ctl)", "--rc-user", user, "--rc-pass", pass,
                            "--addr", "127.0.0.1:\(tryPort)", "--user", user, "--pass", pass,
                            "--read-only",
                            // Like YouTube, tested 8 Nov on a 2.2 GB movie with scripted skips:
@@ -330,7 +335,7 @@ final class Streamer {
                 try? await Task.sleep(for: .milliseconds(150))
                 if !p.isRunning { break }
                 if await Streamer.answers(port: tryPort, user: user, pass: pass) {
-                    server = p; port = tryPort
+                    server = p; port = tryPort; controlPort = ctl
                     return true
                 }
             }
@@ -344,6 +349,36 @@ final class Streamer {
             Colony.shared.say("Couldn't start streaming. Check the internet and try again")
         }
         return false
+    }
+
+    @ObservationIgnored private var controlPort = 0
+
+    /// Drops the server's remembered folder listings so new files can be found. What's playing
+    /// and the cached video parts are untouched.
+    func forgetFolders() async {
+        guard let s = server, s.isRunning, controlPort > 0,
+              let url = URL(string: "http://127.0.0.1:\(controlPort)/vfs/forget") else { return }
+        var req = URLRequest(url: url, timeoutInterval: 5)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Basic " + Data("\(user):\(pass)".utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")
+        req.httpBody = Data("{}".utf8)
+        _ = try? await URLSession.shared.data(for: req)
+    }
+
+    /// The next play starts a fresh server (a shared drive was added or removed).
+    func restartServer() {
+        server?.terminate(); server = nil
+        preloaded = []
+    }
+
+    /// Before 15 Nov the server served "drive:"; its cached starts sit under that name and
+    /// nothing would ever clear them, so they go once.
+    private func clearOldCache() {
+        for sub in ["vfs/drive", "vfsMeta/drive"] {
+            let u = streamCache.appendingPathComponent(sub)
+            if FileManager.default.fileExists(atPath: u.path) { try? FileManager.default.removeItem(at: u) }
+        }
     }
 
     func stop() {
@@ -368,13 +403,38 @@ final class Streamer {
         return (resp as? HTTPURLResponse)?.statusCode == 200
     }
 
-    /// "Movies/x.mkv" for ".../GoogleDrive-…/My Drive/Movies/x.mkv".
+    // MARK: One view of both drives
+
+    /// The streaming server serves a "combine" of My Drive and the shared drive (rclone remote
+    /// defined through environment variables, so rclone.conf is never touched):
+    /// "My Drive/…" and "Shared/…". Tested 15 Nov: both list and read through one server.
+    nonisolated static let combined = "torrantall"
+
+    nonisolated static func combinedEnv(_ shared: Uploader.SharedDrive? = Uploader.savedShared) -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        var ups = ["\"My Drive=drive:\""]
+        if let shared { ups.append("\"Shared=\(Uploader.fs(shared))\"") }
+        env["RCLONE_CONFIG_TORRANTALL_TYPE"] = "combine"
+        env["RCLONE_CONFIG_TORRANTALL_UPSTREAMS"] = ups.joined(separator: " ")
+        return env
+    }
+
+    /// Where a file sits in the combined view:
+    /// ".../GoogleDrive-…/My Drive/Movies/x.mkv" → "My Drive/Movies/x.mkv",
+    /// ".../GoogleDrive-…/Shared drives/<the shared drive>/TorrANT Library/x.mkv" → "Shared/TorrANT Library/x.mkv".
     nonisolated static func pathInDrive(_ file: URL) -> String? {
         let parts = file.standardizedFileURL.pathComponents
-        guard let i = parts.firstIndex(where: { $0.hasPrefix("GoogleDrive-") }),
-              i + 1 < parts.count, parts[i + 1] == "My Drive" else { return nil }
-        let rest = parts[(i + 2)...]
-        return rest.isEmpty ? nil : rest.joined(separator: "/")
+        guard let i = parts.firstIndex(where: { $0.hasPrefix("GoogleDrive-") }), i + 1 < parts.count else { return nil }
+        if parts[i + 1] == "My Drive" {
+            let rest = parts[(i + 2)...]
+            return rest.isEmpty ? nil : (["My Drive"] + rest).joined(separator: "/")
+        }
+        if parts[i + 1] == "Shared drives", i + 2 < parts.count,
+           let shared = Uploader.savedShared, parts[i + 2] == shared.name {
+            let rest = parts[(i + 3)...]
+            return rest.isEmpty ? nil : (["Shared"] + rest).joined(separator: "/")
+        }
+        return nil
     }
 
     nonisolated static func isOnMac(_ file: URL) -> Bool {
@@ -396,8 +456,10 @@ final class Streamer {
         let dir = video.deletingLastPathComponent()
         let stem = video.deletingPathExtension().lastPathComponent
         func list(_ d: URL) -> [URL] {
-            if let known = DriveIndex.shared.list(d) { return known.compactMap { DriveIndex.shared.url($0.path) } }
-            if DriveIndex.shared.loaded, DriveIndex.shared.relative(d) != nil { return [] }   // not in Drive
+            if let idx = DriveIndex.owning(d) {
+                if let known = idx.list(d) { return known.compactMap { idx.url($0.path) } }
+                if idx.loaded { return [] }   // not in Drive
+            }
             return (try? fm.contentsOfDirectory(at: d, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
         }
         let only = list(dir).filter(isVideo).count == 1
@@ -442,8 +504,8 @@ final class Streamer {
     }
 
     nonisolated static func episodes(in folder: URL) -> [URL] {
-        if let all = DriveIndex.shared.files(under: folder) {
-            return all.compactMap { DriveIndex.shared.url($0.path) }.filter(isVideo)
+        if let idx = DriveIndex.owning(folder), let all = idx.files(under: folder) {
+            return all.compactMap { idx.url($0.path) }.filter(isVideo)
                 .filter { !$0.pathComponents.suffix(2).contains { $0.lowercased().hasPrefix("sample") } }
                 .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
         }

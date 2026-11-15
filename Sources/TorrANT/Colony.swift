@@ -55,6 +55,22 @@ final class Colony {
     /// stand-in path of the same shape (DriveIndex knows what's really in Drive either way).
     var libraryRoot: URL { driveDir ?? DriveIndex.standIn }
 
+    /// The shared drive's TorrANT Library, shaped like the Drive app's own path for it
+    /// (".../GoogleDrive-…/Shared drives/<name>/TorrANT Library"), so streaming maps it the same way.
+    var sharedRoot: URL? {
+        guard let d = Uploader.shared.sharedDrive else { return nil }
+        var base = libraryRoot.deletingLastPathComponent()          // …/My Drive
+        if base.lastPathComponent != "My Drive" { base = DriveIndex.standIn.deletingLastPathComponent() }
+        return base.deletingLastPathComponent()                      // …/GoogleDrive-…
+            .appendingPathComponent("Shared drives", isDirectory: true)
+            .appendingPathComponent(d.name, isDirectory: true)
+            .appendingPathComponent(Uploader.folder, isDirectory: true)
+    }
+    /// Every place the Library lives: My Drive, plus the shared drive if one is in use.
+    var libraryRoots: [(root: URL, index: DriveIndex)] {
+        [(libraryRoot, DriveIndex.shared)] + (sharedRoot.map { [($0, DriveIndex.team)] } ?? [])
+    }
+
     /// Only encrypted peer connections (fewer people, but harder for a provider to slow down).
     var requireCrypto: Bool = UserDefaults.standard.bool(forKey: "btRequireCrypto") {
         didSet {
@@ -637,7 +653,7 @@ final class Colony {
     func hasDriveCopy(_ item: HillItem) -> Bool {
         if isOnDrive(item) { return true }
         let name = URL(fileURLWithPath: item.path).lastPathComponent
-        return DriveIndex.shared.list(libraryRoot)?.contains { $0.path == name } == true
+        return libraryRoots.contains { r in r.index.list(r.root)?.contains { $0.path == name } == true }
     }
 
     func isOnDrive(_ item: HillItem) -> Bool {

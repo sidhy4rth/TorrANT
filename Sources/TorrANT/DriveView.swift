@@ -119,8 +119,8 @@ final class DriveWatcher {
     }
 
     func scan() async {
-        let dir = Colony.shared.libraryRoot
-        let entries = await Task.detached(priority: .utility) { DriveWatcher.read(dir) }.value
+        let roots = Colony.shared.libraryRoots
+        let entries = await Task.detached(priority: .utility) { roots.flatMap { DriveWatcher.read($0.root, index: $0.index) } }.value
 
         // Live progress only exists while a file is still going up.
         var live = Set<String>()
@@ -203,16 +203,16 @@ final class DriveWatcher {
 
     /// Google's list of the folder (DriveIndex) for everything that's safely in Drive, plus,
     /// from the Drive app's folder, only what that app is still uploading.
-    nonisolated private static func read(_ dir: URL) -> [EntryStat] {
-        var out = readDisk(dir)
-        guard let top = DriveIndex.shared.list(dir) else { return out }
+    nonisolated private static func read(_ dir: URL, index: DriveIndex) -> [EntryStat] {
+        var out = index === DriveIndex.team ? [] : readDisk(dir)
+        guard let top = index.list(dir) else { return out }
         out = out.filter { e in e.files.contains { !$0.uploaded } }
         let have = Set(out.map { $0.url.lastPathComponent })
         for t in top {
-            guard let u = DriveIndex.shared.url(t.path), !have.contains(u.lastPathComponent) else { continue }
-            let files = t.isDir ? (DriveIndex.shared.files(under: u) ?? []) : [t]
+            guard let u = index.url(t.path), !have.contains(u.lastPathComponent) else { continue }
+            let files = t.isDir ? (index.files(under: u) ?? []) : [t]
             let stats: [FileStat] = files.compactMap { f in
-                guard let fu = DriveIndex.shared.url(f.path) else { return nil }
+                guard let fu = index.url(f.path) else { return nil }
                 let onMac = Int64((try? fu.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0)
                 return FileStat(path: fu.path, size: f.size, uploaded: true, uploading: false, onMac: onMac, problem: nil)
             }
@@ -318,6 +318,39 @@ final class DriveWatcher {
 
 // MARK: - The page
 
+/// Where new uploads go: My Drive or a shared drive (bought storage). Picking a shared drive
+/// also adds its TorrANT Library to the Library; My Drive's stays there either way.
+struct UploadTargetMenu: View {
+    @State private var up = Uploader.shared
+    var body: some View {
+        Menu {
+            Section("New uploads go to") {
+                Button { up.useShared(up.sharedDrive, uploadHere: false) } label: {
+                    Label("My Drive", systemImage: up.target == nil ? "checkmark" : "externaldrive")
+                }
+                ForEach(up.sharedDrives, id: \.self) { d in
+                    Button { up.useShared(d, uploadHere: true) } label: {
+                        Label(d.name + " (shared drive)", systemImage: up.target == d ? "checkmark" : "externaldrive.badge.person.crop")
+                    }
+                }
+            }
+            if let d = up.sharedDrive {
+                Divider()
+                Button("Stop showing \(d.name) in the Library") { up.useShared(nil, uploadHere: false) }
+            }
+            Divider()
+            Button("Look for shared drives") { Task { await up.loadSharedDrives() } }
+        } label: {
+            Label(up.targetName, systemImage: up.target == nil ? "externaldrive.fill" : "externaldrive.fill.badge.person.crop")
+                .font(Theme.body(13, .semibold))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Where new uploads go")
+        .task { await up.loadSharedDrives() }
+    }
+}
+
 struct DriveView: View {
     @State private var watcher = DriveWatcher.shared
     @State private var dropTargeted = false
@@ -369,6 +402,7 @@ struct DriveView: View {
             Text("Winged ants fly your files up.").font(Theme.body(14)).foregroundStyle(Theme.muted)
                 .lineLimit(1).layoutPriority(-1)
             Spacer()
+            UploadTargetMenu()
             StreamChip()
             if let a = watcher.account {
                 HStack(spacing: 8) {
@@ -393,7 +427,7 @@ struct DriveView: View {
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Drop movies, shows or any files here").font(Theme.display(17))
-                Text("They're moved into Google Drive, not copied. Zips are unpacked first so episodes stream.")
+                Text("They go to \(Uploader.shared.targetName). Zips are unpacked first so episodes stream.")
                     .font(Theme.body(14)).foregroundStyle(Theme.muted)
             }
             Spacer()
