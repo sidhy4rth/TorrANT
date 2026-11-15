@@ -253,24 +253,27 @@ final class Colony {
     }
 
     /// Hands-free: stop sharing, unpack a zip, upload, delete the Mac copy.
+    /// With the switch on "Save to this Mac" it uploads a copy and the Mac file stays (user rule,
+    /// 15 Nov): you chose to keep things on this Mac, so sending one up is a backup, not a move.
     /// The item stays in uploads.json until Drive has it, so a failed or interrupted upload
     /// (network gone, app quit, Mac restarted) is tried again instead of sitting on the Mac.
     func autoSend(_ item: HillItem) async {
+        let keep = !Uploader.shared.straightToDrive
         markForUpload(item.id, true)
         guard Uploader.shared.ready else {
             say("\(item.name) is on this Mac. Sign in to Google on the Drive page to send it up")
             return
         }
-        await stopSeeding(item.path)
+        if !keep { await stopSeeding(item.path) }   // a copy only reads the file; sharing can go on
         var item = tidyName(item)
         if Colony.isZip(item.path) {
             guard let unpacked = await unpack(item) else { return }
             item = unpacked
         }
         let local = URL(fileURLWithPath: item.path)
-        guard await Uploader.shared.sendFile(local) else { return }
+        guard await Uploader.shared.sendFile(local, keepOnMac: keep) else { return }
         markForUpload(item.id, false)
-        if let i = hill.firstIndex(where: { $0.id == item.id }), let dir = driveDir {
+        if !keep, let i = hill.firstIndex(where: { $0.id == item.id }), let dir = driveDir {
             hill[i].path = dir.appendingPathComponent(local.lastPathComponent).path
             saveHill()
         }
@@ -310,7 +313,7 @@ final class Colony {
         guard Uploader.shared.ready else { return }
         for id in toUpload {
             guard let item = hill.first(where: { $0.id == id }) else { markForUpload(id, false); continue }
-            if isOnDrive(item) { markForUpload(id, false); continue }
+            if hasDriveCopy(item) { markForUpload(id, false); continue }
             guard FileManager.default.fileExists(atPath: item.path) else { markForUpload(id, false); continue }
             guard !sendingUp.contains(id), carrying[id] == nil, unpacking[id] == nil else { continue }
             say("Trying \(Titles.pretty(item.name)) again: it never made it to Drive")
@@ -630,6 +633,13 @@ final class Colony {
         return nil
     }
 
+    /// On Drive, either moved there or copied up with the Mac copy kept.
+    func hasDriveCopy(_ item: HillItem) -> Bool {
+        if isOnDrive(item) { return true }
+        let name = URL(fileURLWithPath: item.path).lastPathComponent
+        return DriveIndex.shared.list(libraryRoot)?.contains { $0.path == name } == true
+    }
+
     func isOnDrive(_ item: HillItem) -> Bool {
         if let d = driveDir, item.path.hasPrefix(d.path + "/") { return true }
         if item.path.hasPrefix(DriveIndex.standIn.path + "/") { return true }
@@ -638,7 +648,7 @@ final class Colony {
 
     /// Moves a finished download into Google Drive, then points the Anthill at its new home.
     func moveToDrive(_ item: HillItem) async {
-        guard carrying[item.id] == nil, unpacking[item.id] == nil, !sendingUp.contains(item.id), !isOnDrive(item) else { return }
+        guard carrying[item.id] == nil, unpacking[item.id] == nil, !sendingUp.contains(item.id), !hasDriveCopy(item) else { return }
         // rclone first: it uploads in 8 MB pieces and retries only the piece that failed.
         // Google Drive for desktop restarts a whole file from 0 after any 5-second network
         // stall, so big movies (18-21 GB, 15 Nov) never finished on a Wi-Fi that drops now and then.

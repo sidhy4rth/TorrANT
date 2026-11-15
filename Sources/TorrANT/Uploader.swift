@@ -7,6 +7,8 @@ import Foundation
 ///  · A plain link streams from the web straight into Drive: no Mac disk at all.
 ///  · A finished download on the Mac (torrents, Brave catches) is unpacked if it's a zip,
 ///    moved up, and the Mac copy deleted once Drive has it.
+///  · With the switch on "Save to this Mac", sending something up copies it instead: Drive
+///    gets it and the Mac copy stays (user, 15 Nov: films to watch offline tonight, backed up too).
 @MainActor @Observable
 final class Uploader {
     static let shared = Uploader()
@@ -17,6 +19,7 @@ final class Uploader {
         let jobid: Int
         var name: String
         let straight: Bool          // link → Drive, nothing on the Mac
+        var keep = false            // copy up, the Mac file stays
         var size: Double = 0
         var done: Double = 0
         var speed: Double = 0
@@ -94,9 +97,9 @@ final class Uploader {
         return true
     }
 
-    /// A finished file or folder on the Mac: upload it, then delete the Mac copy.
-    /// Returns once it's done, true if it's safely in Drive.
-    func sendFile(_ local: URL) async -> Bool {
+    /// A finished file or folder on the Mac: upload it, then delete the Mac copy
+    /// (or keep it, with `keepOnMac`). Returns once it's done, true if it's safely in Drive.
+    func sendFile(_ local: URL, keepOnMac: Bool = false) async -> Bool {
         guard ready else { Streamer.shared.connect(); return false }
         guard await ensureDaemon() else { return false }
         var isDir: ObjCBool = false
@@ -109,21 +112,25 @@ final class Uploader {
         let drive = "drive,chunk_size=32M:"
         let params: [String: Any] = isDir.boolValue
             ? ["srcFs": local.path, "dstFs": "\(drive)\(Uploader.folder)/\(name)",
-               "deleteEmptySrcDirs": true, "_async": true]
+               "deleteEmptySrcDirs": !keepOnMac, "_async": true]
             : ["srcFs": local.deletingLastPathComponent().path, "srcRemote": name,
                "dstFs": drive, "dstRemote": "\(Uploader.folder)/\(name)", "_async": true]
-        let r = await call(isDir.boolValue ? "sync/move" : "operations/movefile", params)
+        let method = isDir.boolValue ? (keepOnMac ? "sync/copy" : "sync/move")
+                                     : (keepOnMac ? "operations/copyfile" : "operations/movefile")
+        let r = await call(method, params)
         guard let id = r?["jobid"] as? Int else {
             Colony.shared.say("Couldn't start uploading \(name)")
             return false
         }
         var job = Job(jobid: id, name: name, straight: false)
+        job.keep = keepOnMac
         job.size = Double(isDir.boolValue ? Colony.folderBytes(local) : Int64((try? local.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0))
         jobs.append(job)
-        Colony.shared.say("Flying \(name) up to Google Drive")
+        Colony.shared.say(keepOnMac ? "Copying \(name) up to Google Drive (the Mac copy stays)"
+                                    : "Flying \(name) up to Google Drive")
         startPolling()
         let ok = await withCheckedContinuation { waiters[id] = $0 }
-        if ok && isDir.boolValue { try? FileManager.default.removeItem(at: local) }   // only empty folders left
+        if ok && isDir.boolValue && !keepOnMac { try? FileManager.default.removeItem(at: local) }   // only empty folders left
         return ok
     }
 
@@ -167,12 +174,14 @@ final class Uploader {
                 let err = st["error"] as? String ?? ""
                 let name = jobs[i].name
                 let size = jobs[i].size
+                let keep = jobs[i].keep
                 jobs.remove(at: i)
                 // Only call it done once Drive itself shows the file in the folder.
                 if ok { ok = await confirmInDrive(name, size: size) }
                 if ok {
                     Task { await self.refreshIndex() }
-                    Colony.shared.say("\(name) is in Google Drive ✓ Nothing left on this Mac")
+                    Colony.shared.say(keep ? "\(name) is in Google Drive ✓ Your Mac copy stays"
+                                           : "\(name) is in Google Drive ✓ Nothing left on this Mac")
                     PhoneLink.shared.announceReady(name)
                 } else if (st["success"] as? Bool) == true {
                     Colony.shared.say("\(name) uploaded, but it isn't showing in \(Uploader.folder) yet. Check Drive")

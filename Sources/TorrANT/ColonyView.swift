@@ -417,13 +417,19 @@ struct HillRow: View {
         .onTapGesture(count: 2) { Colony.shared.open(item) }
         .onTapGesture { Colony.shared.reveal(item.path) }
         .help("Click to show in Finder, double-click to open")
-        .confirmationDialog("Move \(item.name) to Google Drive?", isPresented: $confirmDrive) {
-            Button("Move to Google Drive") { Task { await Colony.shared.moveToDrive(item) } }
+        .confirmationDialog(Uploader.shared.straightToDrive ? "Move \(item.name) to Google Drive?"
+                                                            : "Copy \(item.name) to Google Drive?",
+                            isPresented: $confirmDrive) {
+            Button(Uploader.shared.straightToDrive ? "Move to Google Drive" : "Copy to Google Drive") {
+                Task { await Colony.shared.moveToDrive(item) }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(Colony.isZip(item.path)
                  ? "TorrANT unpacks it first so each episode streams on its own, and puts the zip in the Trash. This uploads \(Fmt.bytes(item.size)) using your internet data."
-                 : "This uploads \(Fmt.bytes(item.size)) using your internet data.")
+                 : Uploader.shared.straightToDrive
+                    ? "This uploads \(Fmt.bytes(item.size)) using your internet data."
+                    : "This uploads \(Fmt.bytes(item.size)) using your internet data. The Mac copy stays, because the switch is on Save to this Mac.")
         }
         .contextMenu {
             Button("Open") { Colony.shared.open(item) }
@@ -431,8 +437,8 @@ struct HillRow: View {
             if Colony.isZip(item.path) && Colony.shared.unpacking[item.id] == nil {
                 Button("Unpack (zip goes to Trash)") { Task { await Colony.shared.unpack(item) } }
             }
-            if !Colony.shared.isOnDrive(item) && Colony.shared.carrying[item.id] == nil {
-                Button("Move to Google Drive…") { confirmDrive = true }
+            if !Colony.shared.hasDriveCopy(item) && Colony.shared.carrying[item.id] == nil {
+                Button(Uploader.shared.straightToDrive ? "Move to Google Drive…" : "Copy to Google Drive…") { confirmDrive = true }
             }
             Divider()
             Button("Forget it") { Colony.shared.forget(item) }
@@ -450,7 +456,7 @@ struct HillRow: View {
             ProgressView().controlSize(.small)
                 .help("Moving to Google Drive…")
                 .accessibilityLabel("Moving to Google Drive")
-        } else if colony.isOnDrive(item) {
+        } else if colony.hasDriveCopy(item) {
             Image(systemName: "icloud.fill").font(.system(size: 12))
                 .foregroundStyle(Theme.muted)
                 .help("On Google Drive")
@@ -465,8 +471,8 @@ struct HillRow: View {
             .foregroundStyle(Theme.text)
             .opacity(hover ? 1 : 0)
             .allowsHitTesting(hover)   // hidden means not clickable
-            .help("Move to Google Drive")
-            .accessibilityLabel("Move to Google Drive")
+            .help(Uploader.shared.straightToDrive ? "Move to Google Drive" : "Copy to Google Drive (the Mac copy stays)")
+            .accessibilityLabel(Uploader.shared.straightToDrive ? "Move to Google Drive" : "Copy to Google Drive")
         }
     }
 }
