@@ -130,6 +130,7 @@ struct AntCam: View {
     @Environment(\.openWindow) private var openWindow
     @State private var input = ""
     private var colony: Colony { Colony.shared }
+    private var uploader: Uploader { Uploader.shared }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -137,9 +138,8 @@ struct AntCam: View {
                 AntGlyph(color: Theme.red).frame(width: 34)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Ant Cam").font(Theme.display(19))
-                    EveryFrame(active: colony.anythingMoving, fps: 15) { now in
-                        Text("\(colony.trail.filter { $0.state == .active }.count) on the trail · \(Fmt.liveSpeed(colony.liveDown(now))) coming home")
-                            .font(Theme.body(13)).foregroundStyle(Theme.muted).monospacedDigit()
+                    EveryFrame(active: colony.anythingMoving || !uploader.jobs.isEmpty, fps: 15) { now in
+                        Text(headline(now)).font(Theme.body(13)).foregroundStyle(Theme.muted).monospacedDigit()
                     }
                 }
                 Spacer()
@@ -170,7 +170,7 @@ struct AntCam: View {
                     }
                 }
 
-                if colony.trail.isEmpty {
+                if colony.trail.isEmpty && uploader.jobs.isEmpty && colony.carrying.isEmpty {
                     Text("No crumbs on the trail.").font(Theme.body(14)).foregroundStyle(Theme.muted)
                         .frame(maxWidth: .infinity).padding(.vertical, 18)
                 }
@@ -198,6 +198,10 @@ struct AntCam: View {
                             }
                         }
                     }
+                }
+
+                if !uploader.jobs.isEmpty || !colony.carrying.isEmpty {
+                    uploads
                 }
 
                 if let h = colony.lastHome, Date().timeIntervalSince(h.date) < 600 {
@@ -232,6 +236,58 @@ struct AntCam: View {
         .background(Theme.soil)
         .foregroundStyle(Theme.text)
         .preferredColorScheme(.dark)
+    }
+
+    private func headline(_ now: Date) -> String {
+        let down = colony.trail.filter { $0.state == .active }.count
+        let up = uploader.jobs.count + colony.carrying.count
+        var parts = ["\(down) on the trail · \(Fmt.liveSpeed(colony.liveDown(now))) coming home"]
+        if up > 0 { parts.append("\(up) flying up · \(Fmt.liveSpeed(uploader.liveSpeed(now)))") }
+        return parts.joined(separator: "\n")
+    }
+
+    /// Uploads to Google Drive, under the downloads: amber like the flyer ant.
+    private var uploads: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "icloud.and.arrow.up.fill").font(.system(size: 12, weight: .bold))
+                Text("Flying up to Drive").font(Theme.body(12, .bold))
+            }
+            .foregroundStyle(Theme.flyerAnt)
+            ForEach(uploader.jobs.prefix(4)) { j in
+                EveryFrame(active: true, fps: 15) { now in
+                    let done = uploader.liveDone(j, now)
+                    let eta: TimeInterval? = j.speed > 20_000 && j.size > done ? (j.size - done) / j.speed : nil
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            Text(Titles.pretty(j.name)).font(Theme.body(14, .semibold)).lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                            Text(Fmt.clock(eta)).font(Theme.body(14, .bold)).monospacedDigit()
+                        }
+                        Capsule().fill(Theme.deep).frame(height: 10)
+                            .overlay(alignment: .leading) {
+                                GeometryReader { g in
+                                    Capsule().fill(Theme.flyerAnt).frame(width: g.size.width * uploader.liveFraction(j, now))
+                                }
+                            }
+                        HStack {
+                            Text("UPLOAD").font(Theme.body(12, .bold)).foregroundStyle(Theme.flyerAnt)
+                            Spacer()
+                            Text(j.size > 0 ? "\(Fmt.liveSize(done)) of \(Fmt.liveSize(j.size)) · \(Fmt.liveSpeed(j.speed))"
+                                            : Fmt.liveSpeed(j.speed))
+                                .font(Theme.body(12)).monospacedDigit().foregroundStyle(Theme.muted)
+                        }
+                    }
+                }
+            }
+            ForEach(Array(colony.carrying.values.sorted().prefix(2)), id: \.self) { name in
+                HStack {
+                    Text(Titles.pretty(name)).font(Theme.body(14, .semibold)).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Text("Moving…").font(Theme.body(12)).foregroundStyle(Theme.muted)
+                }
+            }
+        }
     }
 
     private func send() {

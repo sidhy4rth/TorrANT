@@ -460,7 +460,9 @@ struct LibraryView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(16)
+                // Two cards must fit in the box: they used to be 116 pt each and spilled onto the Sort chips.
                 .frame(width: 330, height: 236, alignment: .topLeading)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
             }
         }
@@ -838,14 +840,17 @@ private struct ContinueCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            PosterImage(entry: entry).frame(width: 64, height: 96)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            VStack(alignment: .leading, spacing: 6) {
+            PosterImage(entry: entry).frame(width: 40, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 5) {
                 Text(entry.title).font(Theme.body(14, .semibold)).lineLimit(1)
-                Text(label).font(Theme.body(12)).foregroundStyle(Theme.muted)
+                HStack(spacing: 0) {
+                    if !label.isEmpty { Text(label + " · ").foregroundStyle(Theme.muted) }
+                    Text(log.resumeAt(file.lastPathComponent) != nil ? "\(log.minutesLeft(file.lastPathComponent) ?? 0) min left" : "Next episode")
+                        .fontWeight(.semibold).foregroundStyle(Theme.red)
+                }
+                .font(Theme.body(12)).lineLimit(1)
                 Bar(fraction: log.fraction(file.lastPathComponent), color: Theme.red).frame(height: 5)
-                Text(log.resumeAt(file.lastPathComponent) != nil ? "\(log.minutesLeft(file.lastPathComponent) ?? 0) min left" : "Next episode")
-                    .font(Theme.body(12, .semibold)).foregroundStyle(Theme.red)
             }
             .frame(width: 170, alignment: .leading)
             Image(systemName: "play.fill").font(.system(size: 13, weight: .bold))
