@@ -452,8 +452,9 @@ struct LibraryView: View {
 
     // MARK: Filtering and sorting
 
-    /// Films that belong to a collection live on the Collections tab only (search still finds them).
-    private var mainShelf: [LibraryEntry] { store.entries.filter { !collections.inCollection($0, among: store.entries) } }
+    /// Every title, collection films included: they're shelved in the Library and also kept
+    /// together, in order, on the Collections tab (user, 15 Nov night: "shelf it on the library too").
+    private var mainShelf: [LibraryEntry] { store.entries }
 
     private var visible: [LibraryEntry] {
         let q = query.trimmingCharacters(in: .whitespaces)
