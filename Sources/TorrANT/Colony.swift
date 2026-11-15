@@ -66,6 +66,13 @@ final class Colony {
             .appendingPathComponent(d.name, isDirectory: true)
             .appendingPathComponent(Uploader.folder, isDirectory: true)
     }
+    /// The shared drive's name when a Library file or folder lives there (for its label).
+    func sharedDriveName(for url: URL) -> String? {
+        guard let root = sharedRoot?.standardizedFileURL.path else { return nil }
+        let p = url.standardizedFileURL.path
+        return p == root || p.hasPrefix(root + "/") ? Uploader.shared.sharedDrive?.name : nil
+    }
+
     /// Every place the Library lives: My Drive, plus the shared drive if one is in use.
     var libraryRoots: [(root: URL, index: DriveIndex)] {
         [(libraryRoot, DriveIndex.shared)] + (sharedRoot.map { [($0, DriveIndex.team)] } ?? [])

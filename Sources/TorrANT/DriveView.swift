@@ -645,6 +645,14 @@ struct DriveRow: View {
 
     private var tagRow: some View {
         HStack(spacing: 5) {
+            // Which drive it's on, when it's not My Drive.
+            if let shared = Colony.shared.sharedDriveName(for: item.url) {
+                Label(shared, systemImage: "externaldrive.fill.badge.person.crop")
+                    .font(Theme.body(11, .semibold)).foregroundStyle(Theme.onAccent)
+                    .padding(.horizontal, 7).frame(height: 20)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.redFill))
+                    .help("On the \(shared) shared drive")
+            }
             ForEach(Titles.tags(item.name), id: \.self) { t in
                 Text(t).font(Theme.body(11, .semibold)).foregroundStyle(Theme.text.opacity(0.85))
                     .padding(.horizontal, 7).frame(height: 20)

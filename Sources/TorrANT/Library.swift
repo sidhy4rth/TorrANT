@@ -999,6 +999,18 @@ private struct PosterCard: View {
                 }
             }
             .overlay(alignment: .topLeading) { ScoreBadge(entry: entry) }
+            .overlay(alignment: .topTrailing) {
+                // On the shared drive, not My Drive.
+                if let shared = Colony.shared.sharedDriveName(for: entry.url) {
+                    Image(systemName: "externaldrive.fill.badge.person.crop")
+                        .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.onAccent)
+                        .frame(width: 26, height: 22)
+                        .background(Capsule().fill(Theme.redFill))
+                        .padding(7)
+                        .help("On the \(shared) shared drive")
+                        .accessibilityLabel("On the \(shared) shared drive")
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(hover ? Theme.red : Theme.line, lineWidth: hover ? 2 : 1))
             .scaleEffect(hover ? 1.045 : 1)
