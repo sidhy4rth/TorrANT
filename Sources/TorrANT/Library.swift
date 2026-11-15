@@ -85,6 +85,8 @@ struct LibraryEntry: Identifiable, Equatable {
     /// When it landed in the Library folder (newest first in "Recently shelved").
     var added: Date = .distantPast
     var posterKey: String { isShow ? "show:\(parsed.lowercased())" : "movie:\(parsed.lowercased()):\(year ?? 0)" }
+    /// A season's own poster (TVmaze has one per season), so a show's shelf isn't 8 copies of one cover.
+    var seasonKey: String? { isShow ? "\(posterKey):s\(season ?? 1)" : nil }
 
     init(url: URL, isShow: Bool, title: String, year: Int?, season: Int?, episodes: [URL], added: Date = .distantPast) {
         self.url = url; self.isShow = isShow; self.parsed = title; self.title = title
@@ -332,6 +334,41 @@ final class LibraryStore {
             }
             tried[e.posterKey] = saved
             if saved.isEmpty { missedAt[e.posterKey] = Date() }
+            if let d = try? JSONEncoder().encode(tried) { try? d.write(to: index, options: .atomic) }
+        }
+        await fetchSeasonPosters()
+    }
+
+    /// Each season's own poster from TVmaze: one look-up per show, misses retry at most hourly.
+    private func fetchSeasonPosters() async {
+        let due = entries.filter { e in
+            guard let k = e.seasonKey else { return false }
+            guard let t = tried[k] else { return true }
+            return t.isEmpty && Date().timeIntervalSince(missedAt[k] ?? .distantPast) > 3600
+        }
+        for show in Dictionary(grouping: due, by: \.posterKey).values {
+            guard let first = show.first else { continue }
+            var art: [Int: String] = [:]
+            if let d = await LibraryStore.json("https://api.tvmaze.com/singlesearch/shows?q=\(LibraryStore.q(first.title))&embed=seasons") as? [String: Any],
+               let seasons = (d["_embedded"] as? [String: Any])?["seasons"] as? [[String: Any]] {
+                for s in seasons {
+                    if let n = s["number"] as? Int, let img = s["image"] as? [String: Any],
+                       let u = (img["original"] ?? img["medium"]) as? String { art[n] = u }
+                }
+            }
+            for e in show {
+                guard let k = e.seasonKey else { continue }
+                var saved = ""
+                if let u = art[e.season ?? 1].flatMap(URL.init(string:)), let data = await LibraryStore.download(u) {
+                    let f = "\(abs(k.hashValue)).img"
+                    if (try? data.write(to: dir.appendingPathComponent(f), options: .atomic)) != nil {
+                        saved = f
+                        posters[k] = dir.appendingPathComponent(f)
+                    }
+                }
+                tried[k] = saved
+                if saved.isEmpty { missedAt[k] = Date() }
+            }
             if let d = try? JSONEncoder().encode(tried) { try? d.write(to: index, options: .atomic) }
         }
     }
@@ -883,10 +920,13 @@ private struct ShelvingScene: View {
 /// The poster, or a drawn stand-in while it loads or if none was found.
 struct PosterImage: View {
     let entry: LibraryEntry
+    /// A season shows its own poster when there is one; false = the show's main poster.
+    var seasonArt = true
     @State private var store = LibraryStore.shared
     var body: some View {
         ZStack {
-            if let u = store.posters[entry.posterKey], let img = NSImage(contentsOf: u) {
+            if let u = (seasonArt ? entry.seasonKey.flatMap { store.posters[$0] } : nil) ?? store.posters[entry.posterKey],
+               let img = NSImage(contentsOf: u) {
                 Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
             } else {
                 LinearGradient(colors: [Theme.surface2, Theme.surface], startPoint: .top, endPoint: .bottom)
@@ -930,7 +970,7 @@ private struct CollectionCover: View {
                 Color.clear
                     .aspectRatio(2 / 3, contentMode: .fit)
                     .frame(maxWidth: .infinity)
-                    .overlay { if let first = line.first { PosterImage(entry: first) } }
+                    .overlay { if let first = line.first { PosterImage(entry: first, seasonArt: false) } }
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(alignment: .bottomLeading) {
                         Label(collection.count(line.count), systemImage: "square.stack.fill")
