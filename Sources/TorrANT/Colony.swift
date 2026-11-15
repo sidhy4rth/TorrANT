@@ -625,6 +625,7 @@ final class Colony {
                 rescued = true
                 await rescueStuckDriveUploads()
             }
+            relinkRenamedDriveItems()
             if let dir = driveDir {
                 driveBusy = await Task.detached(priority: .utility) { Colony.anythingUploading(dir) }.value
             } else {
@@ -667,6 +668,23 @@ final class Colony {
             let moved = hill[i]
             Task { await self.moveToDrive(moved) }
         }
+    }
+
+    /// Google Drive for desktop sometimes shows a file as "Name (1).mkv" on the Mac (15 Nov:
+    /// its own failed copy still held the plain name). Point the Anthill at whatever is there.
+    func relinkRenamedDriveItems() {
+        let fm = FileManager.default
+        var changed = false
+        for i in hill.indices where isOnDrive(hill[i]) && !fm.fileExists(atPath: hill[i].path) {
+            let u = URL(fileURLWithPath: hill[i].path)
+            let parent = u.deletingLastPathComponent(), ext = u.pathExtension
+            let base = ext.isEmpty ? u.lastPathComponent : u.deletingPathExtension().lastPathComponent
+            for n in 1...9 {
+                let alt = parent.appendingPathComponent(ext.isEmpty ? "\(base) (\(n))" : "\(base) (\(n)).\(ext)")
+                if fm.fileExists(atPath: alt.path) { hill[i].path = alt.path; changed = true; break }
+            }
+        }
+        if changed { saveHill() }
     }
 
     nonisolated static func anythingUploading(_ dir: URL) -> Bool {
