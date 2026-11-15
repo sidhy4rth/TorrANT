@@ -224,8 +224,11 @@ enum Fmt {
         let f = DateFormatter(); f.dateFormat = "HH:mm"; return f.string(from: d)
     }
     static func when(_ d: Date) -> String {
+        // Arrivals are stamped a moment "in the future" of the first draw, which read "in 0 sec."
+        let now = Date()
+        if now.timeIntervalSince(d) < 60 { return "just now" }
         let f = RelativeDateTimeFormatter(); f.unitsStyle = .short
-        return f.localizedString(for: d, relativeTo: Date())
+        return f.localizedString(for: min(d, now), relativeTo: now)
     }
 }
 

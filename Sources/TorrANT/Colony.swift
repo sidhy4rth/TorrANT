@@ -228,6 +228,8 @@ final class Colony {
     }
 
     private func bringHome(_ c: Crumb) {
+        // A .torrent fetched from a link is just the map; the real download follows it.
+        if c.homePath.lowercased().hasSuffix(".torrent") { return }
         let item = HillItem(name: c.name, path: c.homePath, size: c.total, kind: c.kind, date: Date())
         hill.insert(item, at: 0)
         if hill.count > 200 { hill.removeLast(hill.count - 200) }
@@ -247,22 +249,72 @@ final class Colony {
     }
 
     /// Hands-free: stop sharing, unpack a zip, upload, delete the Mac copy.
+    /// The item stays in uploads.json until Drive has it, so a failed or interrupted upload
+    /// (network gone, app quit, Mac restarted) is tried again instead of sitting on the Mac.
     func autoSend(_ item: HillItem) async {
+        markForUpload(item.id, true)
         guard Uploader.shared.ready else {
             say("\(item.name) is on this Mac. Sign in to Google on the Drive page to send it up")
             return
         }
         await stopSeeding(item.path)
-        var item = item
+        var item = tidyName(item)
         if Colony.isZip(item.path) {
             guard let unpacked = await unpack(item) else { return }
             item = unpacked
         }
         let local = URL(fileURLWithPath: item.path)
         guard await Uploader.shared.sendFile(local) else { return }
+        markForUpload(item.id, false)
         if let i = hill.firstIndex(where: { $0.id == item.id }), let dir = driveDir {
             hill[i].path = dir.appendingPathComponent(local.lastPathComponent).path
             saveHill()
+        }
+    }
+
+    /// Names ending in a space (one torrent's folder did, 13 Nov) upload as an empty folder
+    /// and trip up Windows later, so trim them on the Mac first.
+    private func tidyName(_ item: HillItem) -> HillItem {
+        let u = URL(fileURLWithPath: item.path)
+        let clean = u.lastPathComponent.trimmingCharacters(in: .whitespaces)
+        guard !clean.isEmpty, clean != u.lastPathComponent else { return item }
+        let dest = u.deletingLastPathComponent().appendingPathComponent(clean)
+        guard !FileManager.default.fileExists(atPath: dest.path),
+              (try? FileManager.default.moveItem(at: u, to: dest)) != nil,
+              let i = hill.firstIndex(where: { $0.id == item.id }) else { return item }
+        hill[i].path = dest.path
+        hill[i].name = item.name.trimmingCharacters(in: .whitespaces)
+        saveHill()
+        return hill[i]
+    }
+
+    // MARK: Uploads that must still happen
+
+    private var uploadsFile: URL { support.appendingPathComponent("uploads.json") }
+    @ObservationIgnored private lazy var toUpload: Set<UUID> = {
+        guard let d = try? Data(contentsOf: uploadsFile), let ids = try? JSONDecoder().decode([UUID].self, from: d) else { return [] }
+        return Set(ids)
+    }()
+
+    private func markForUpload(_ id: UUID, _ on: Bool) {
+        if on { toUpload.insert(id) } else { toUpload.remove(id) }
+        if let d = try? JSONEncoder().encode(Array(toUpload)) { try? d.write(to: uploadsFile, options: .atomic) }
+    }
+
+    /// Sends again anything that was meant for Drive but is still on the Mac.
+    func retryUnfinishedUploads() async {
+        guard Uploader.shared.ready else { return }
+        for id in toUpload {
+            guard let item = hill.first(where: { $0.id == id }) else { markForUpload(id, false); continue }
+            if isOnDrive(item) { markForUpload(id, false); continue }
+            guard FileManager.default.fileExists(atPath: item.path) else { markForUpload(id, false); continue }
+            guard !sendingUp.contains(id), carrying[id] == nil, unpacking[id] == nil else { continue }
+            say("Trying \(Titles.pretty(item.name)) again: it never made it to Drive")
+            sendingUp.insert(id)
+            Task {
+                await self.autoSend(item)
+                self.sendingUp.remove(id)
+            }
         }
     }
 
@@ -499,7 +551,10 @@ final class Colony {
             try? await aria.call("aria2.removeDownloadResult", [c.gid])
         }
         forgetSwarm(gid: c.gid)
-        if deleteFiles {
+        // Half a download is useless (each new try starts over), so dropping one bins it.
+        // Before 15 Nov "Drop it" left them, and 4.7 GB of halves piled up.
+        let unfinished = c.state != .seeding && c.state != .complete && !c.isHome
+        if deleteFiles || unfinished {
             let urls = [URL(fileURLWithPath: path), URL(fileURLWithPath: path + ".aria2")]
                 .filter { FileManager.default.fileExists(atPath: $0.path) }
             if !urls.isEmpty { _ = try? await NSWorkspace.shared.recycle(urls) }
@@ -618,12 +673,19 @@ final class Colony {
     @ObservationIgnored private var driveBusy = false
     @ObservationIgnored private var sendingUp: Set<UUID> = []
     @ObservationIgnored private var rescued = false
+    @ObservationIgnored private var lastRetry = Date.distantPast
 
     private func watchDriveForever() async {
         while true {
             if !rescued, Uploader.shared.ready {
                 rescued = true
                 await rescueStuckDriveUploads()
+                await retryUnfinishedUploads()
+                lastRetry = Date()
+                sweepLeftovers()
+            } else if rescued, Date().timeIntervalSince(lastRetry) > 900 {
+                lastRetry = Date()
+                await retryUnfinishedUploads()
             }
             relinkRenamedDriveItems()
             if let dir = driveDir {
@@ -685,6 +747,29 @@ final class Colony {
             }
         }
         if changed { saveHill() }
+    }
+
+    /// Halves of downloads nobody is working on any more (aria2's .aria2 note beside a file
+    /// that isn't on the trail): moved to the Bin once a day after a day of sitting still.
+    func sweepLeftovers() {
+        let fm = FileManager.default
+        let live = Set(trail.map(\.homePath) + seeding.map(\.homePath))
+        guard let names = try? fm.contentsOfDirectory(atPath: downloadDir.path) else { return }
+        var binned: [URL] = []
+        for n in names where n.hasSuffix(".aria2") {
+            let note = downloadDir.appendingPathComponent(n)
+            let part = downloadDir.appendingPathComponent(String(n.dropLast(6)))
+            guard !live.contains(part.path),
+                  let m = (try? fm.attributesOfItem(atPath: note.path))?[.modificationDate] as? Date,
+                  Date().timeIntervalSince(m) > 86400 else { continue }
+            binned.append(note)
+            if fm.fileExists(atPath: part.path) { binned.append(part) }
+        }
+        guard !binned.isEmpty else { return }
+        Task {
+            _ = try? await NSWorkspace.shared.recycle(binned)
+            self.say("Binned \(binned.count / 2) half-finished download\(binned.count > 2 ? "s" : "") nobody was working on")
+        }
     }
 
     nonisolated static func anythingUploading(_ dir: URL) -> Bool {
@@ -1124,7 +1209,7 @@ final class Colony {
     private func loadHill() {
         guard let data = try? Data(contentsOf: hillFile),
               let items = try? JSONDecoder().decode([HillItem].self, from: data) else { return }
-        hill = items
+        hill = items.filter { !$0.path.lowercased().hasSuffix(".torrent") }
     }
 
     private func saveHill() {

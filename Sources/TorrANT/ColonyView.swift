@@ -405,7 +405,9 @@ struct HillRow: View {
                 .help(item.name)
             Spacer(minLength: 4)
             driveBadge
-            Text(Fmt.when(item.date)).font(Theme.body(12)).foregroundStyle(Theme.muted)
+            TimelineView(.everyMinute) { _ in
+                Text(Fmt.when(item.date)).font(Theme.body(12)).foregroundStyle(Theme.muted)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

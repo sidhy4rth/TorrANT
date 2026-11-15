@@ -385,8 +385,6 @@ Mac* on the Google Drive page. They're built; they haven't been walked through o
   night shift and preloading know to wait.
 - **Tiny files upload slowly.** Google files about two or three new files a second, so an
   unpacked zip of hundreds of small files takes minutes even when it's only a few MB.
-- **Two display bugs:** the Anthill shows "in 0 sec." for every arrival, and a torrent fetched from a link
-  leaves its `.torrent` file listed in the Anthill as if it were a download.
 
 ---
 
