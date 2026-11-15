@@ -240,6 +240,18 @@ final class LibraryStore {
         scanned = true
         await fetchPosters()
         await TitleInfo.shared.fetch(entries)
+        await Collections.shared.fetch(entries)
+    }
+
+    /// A folder holding several films ("Harry Potter Saga 2001-2011": one file per film, each
+    /// with its own year, no episode numbers) is shelved as separate films, not as a show.
+    nonisolated static func packOfFilms(_ videos: [URL], added: Date) -> [LibraryEntry]? {
+        guard videos.count >= 2, !videos.contains(where: { Streamer.looksLikeEpisode($0.lastPathComponent) }) else { return nil }
+        let parsed = videos.map { ($0, Titles.parse($0.lastPathComponent)) }
+        let years = parsed.compactMap(\.1.year)
+        guard years.count == videos.count, Set(years).count == years.count,
+              !parsed.contains(where: { $0.1.season != nil }) else { return nil }
+        return parsed.map { LibraryEntry(url: $0.0, isShow: false, title: $0.1.title, year: $0.1.year, season: nil, episodes: [], added: added) }
     }
 
     nonisolated static func scan(_ root: URL) -> [LibraryEntry] {
@@ -252,6 +264,7 @@ final class LibraryStore {
                 if t.isDir {
                     let eps = Streamer.episodes(in: u)
                     guard !eps.isEmpty else { continue }
+                    if let films = LibraryStore.packOfFilms(eps, added: t.added) { out += films; continue }
                     let show = p.season != nil || eps.count > 1
                     out.append(LibraryEntry(url: u, isShow: show, title: p.title, year: p.year, season: p.season ?? 1,
                                             episodes: show ? eps : [], added: t.added))
@@ -273,6 +286,7 @@ final class LibraryStore {
             if isDir {
                 let eps = Streamer.episodes(in: u)
                 guard !eps.isEmpty else { continue }
+                if let films = LibraryStore.packOfFilms(eps, added: added) { out += films; continue }
                 let show = p.season != nil || eps.count > 1
                 out.append(LibraryEntry(url: u, isShow: show, title: p.title, year: p.year, season: p.season ?? 1,
                                         episodes: show ? eps : [], added: added))
@@ -386,13 +400,14 @@ struct LibraryView: View {
     @State private var store = LibraryStore.shared
     @State private var log = WatchLog.shared
     @State private var info = TitleInfo.shared
+    @State private var collections = Collections.shared
     @State private var openShow: LibraryEntry?
     @State private var openMovie: LibraryEntry?
-    @State private var filter: Filter = .all
+    @AppStorage("libraryFilter") private var filter: Filter = .all
     @State private var sort: Sort = .recent
     @State private var query = ""
 
-    enum Filter: String, CaseIterable { case all = "All", movies = "Movies", shows = "Shows", unwatched = "Unwatched" }
+    enum Filter: String, CaseIterable { case all = "All", movies = "Movies", shows = "Shows", unwatched = "Unwatched", collections = "Collections" }
     enum Sort: String, CaseIterable { case recent = "Recently shelved", top = "Top rated", az = "A–Z" }
 
     var body: some View {
@@ -409,7 +424,9 @@ struct LibraryView: View {
                         top
                         chips
                         let list = visible
-                        if list.isEmpty {
+                        if filter == .collections {
+                            CollectionShelves(entries: list, open: open, play: play)
+                        } else if list.isEmpty {
                             Text("Nothing matches.").font(Theme.body(15)).foregroundStyle(Theme.muted)
                                 .frame(maxWidth: .infinity).padding(.top, 30)
                         } else {
@@ -435,16 +452,26 @@ struct LibraryView: View {
 
     // MARK: Filtering and sorting
 
+    /// Films that belong to a collection live on the Collections tab only (search still finds them).
+    private var mainShelf: [LibraryEntry] { store.entries.filter { !collections.inCollection($0) } }
+
     private var visible: [LibraryEntry] {
-        var list = store.entries
+        let q = query.trimmingCharacters(in: .whitespaces)
+        if filter == .collections {
+            let all = store.entries.filter { collections.inCollection($0) }
+            return q.isEmpty ? all : all.filter { e in
+                e.title.localizedCaseInsensitiveContains(q)
+                    || collections.collections(in: [e]).contains { $0.name.localizedCaseInsensitiveContains(q) }
+            }
+        }
+        var list = q.isEmpty ? mainShelf : store.entries
         switch filter {
-        case .all: break
+        case .all, .collections: break
         case .movies: list = list.filter { !$0.isShow }
         case .shows: list = list.filter(\.isShow)
         case .unwatched:
             list = list.filter { e in e.isShow ? e.episodes.contains { !log.finished($0.lastPathComponent) } : !log.finished(e.url.lastPathComponent) }
         }
-        let q = query.trimmingCharacters(in: .whitespaces)
         if !q.isEmpty { list = list.filter { $0.title.localizedCaseInsensitiveContains(q) } }
         switch sort {
         case .recent: list.sort { $0.added > $1.added }
@@ -504,10 +531,11 @@ struct LibraryView: View {
     private func count(_ f: Filter) -> String {
         let n: Int
         switch f {
-        case .all: n = store.entries.count
-        case .movies: n = store.movies.count
+        case .all: n = mainShelf.count
+        case .movies: n = mainShelf.filter { !$0.isShow }.count
         case .shows: n = store.shows.count
-        case .unwatched: n = store.entries.filter { e in e.isShow ? e.episodes.contains { !log.finished($0.lastPathComponent) } : !log.finished(e.url.lastPathComponent) }.count
+        case .unwatched: n = mainShelf.filter { e in e.isShow ? e.episodes.contains { !log.finished($0.lastPathComponent) } : !log.finished(e.url.lastPathComponent) }.count
+        case .collections: n = collections.collections(in: store.entries).count
         }
         return " \(n)"
     }
@@ -554,6 +582,97 @@ struct LibraryView: View {
             Text(sub).font(Theme.body(15)).foregroundStyle(Theme.muted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// The Collections tab: one shelf per film series, in release order. Films you have play like
+/// anywhere else; the ones you don't have yet stand dimmed in their place ("3 of 8").
+private struct CollectionShelves: View {
+    let entries: [LibraryEntry]
+    let open: (LibraryEntry) -> Void
+    let play: (LibraryEntry) -> Void
+    @State private var collections = Collections.shared
+    @State private var log = WatchLog.shared
+
+    var body: some View {
+        let list = collections.collections(in: entries)
+        if list.isEmpty {
+            VStack(spacing: 8) {
+                Text("No collections yet.").font(Theme.display(20))
+                Text("Films from a series (Harry Potter, Transformers, Fast & Furious…) gather here, in order.")
+                    .font(Theme.body(14)).foregroundStyle(Theme.muted)
+            }
+            .frame(maxWidth: .infinity).padding(.top, 40)
+        } else {
+            VStack(alignment: .leading, spacing: 30) {
+                ForEach(list) { c in shelf(c) }
+            }
+        }
+    }
+
+    private func shelf(_ c: FilmCollection) -> some View {
+        let line = collections.lineup(c, entries: entries)
+        let have = line.filter { $0.entry != nil }.count
+        let seen = line.compactMap(\.entry).filter { log.finished($0.url.lastPathComponent) }.count
+        let next = line.compactMap(\.entry).first { !log.finished($0.url.lastPathComponent) }
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(c.name).font(Theme.display(22))
+                Text("\(have) of \(line.count) films" + (seen > 0 ? " · \(seen) watched" : ""))
+                    .font(Theme.body(13)).foregroundStyle(Theme.muted)
+                Spacer()
+                if let next {
+                    Button { play(next) } label: {
+                        Label(seen > 0 ? "Next: \(next.title)" : "Start with \(next.title)", systemImage: "play.fill")
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(RedButtonStyle())
+                    .help("Plays the first one you haven't finished, in order")
+                }
+            }
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 18) {
+                    ForEach(Array(line.enumerated()), id: \.offset) { i, slot in
+                        Group {
+                            if let e = slot.entry {
+                                PosterCard(entry: e, order: i) { open(e) } play: { play(e) }
+                            } else {
+                                MissingFilm(number: i + 1, member: slot.member)
+                            }
+                        }
+                        .frame(width: 150)
+                    }
+                }
+                .padding(.vertical, 10).padding(.horizontal, 4)
+            }
+            .scrollIndicators(.never)
+            RoundedRectangle(cornerRadius: 4).fill(Theme.track).frame(height: 8).padding(.top, -14)
+        }
+    }
+}
+
+/// A film of the series that isn't in the Library yet: a dashed space on the shelf.
+private struct MissingFilm: View {
+    let number: Int
+    let member: FilmCollection.Member
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Theme.lineSoft, style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
+                .aspectRatio(2 / 3, contentMode: .fit)
+                .overlay {
+                    VStack(spacing: 8) {
+                        Text("\(number)").font(Theme.display(34)).foregroundStyle(Theme.lineSoft)
+                        Text(member.title).font(Theme.body(13, .semibold)).foregroundStyle(Theme.muted)
+                            .multilineTextAlignment(.center).lineLimit(4).padding(.horizontal, 12)
+                    }
+                }
+            Text(member.title).font(Theme.body(14, .semibold)).foregroundStyle(Theme.muted).lineLimit(1)
+            Text((member.year.map(String.init) ?? "") + " · Not in your Library")
+                .font(Theme.body(12)).foregroundStyle(Theme.muted.opacity(0.7)).lineLimit(1)
+        }
+        .help("\(member.title) isn't in your Library yet")
     }
 }
 
