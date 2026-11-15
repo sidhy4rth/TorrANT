@@ -14,14 +14,17 @@ struct FilmCollection: Codable, Equatable, Identifiable {
 }
 
 /// Groups Library films into series, from Wikidata (free, no account): a film's page says
-/// which series it's "part of" (P179), and the series lists every film with its place and
-/// release date. Looked up once per film and kept in App Support/TorrANT/posters/collections.json.
-/// Films in a collection show only on the Collections tab, so the main Library stays uncluttered.
+/// which series it's "part of" (P179), and the series gives the release order. Looked up once
+/// per film and kept in App Support/TorrANT/posters/collections.json.
+/// User's rules (15 Nov): a collection only appears once 2+ of its films are in the Library,
+/// it shows only films you have (no suggestions, no "1 of 8"), shared universes like the
+/// MCU are not collections, and collection films show only on the Collections tab.
 @MainActor @Observable
 final class Collections {
     static let shared = Collections()
 
     private struct Saved: Codable {
+        var version = 2
         var series: [String: FilmCollection] = [:]
         var filmQID: [String: String] = [:]      // poster key → the film's Wikidata id
         var filmSeries: [String: String] = [:]   // poster key → series id ("" = not part of one)
@@ -38,12 +41,18 @@ final class Collections {
 
     init() {
         if let d = try? Data(contentsOf: file), let s = try? JSONDecoder().decode(Saved.self, from: d) { saved = s }
+        // Version 1 picked the biggest series (the whole MCU): choose again with today's rules.
+        if (try? JSONDecoder().decode(Version.self, from: (try? Data(contentsOf: file)) ?? Data()))?.version ?? 1 < 2 {
+            saved.filmSeries = [:]; saved.version = 2
+        }
     }
 
     private func save() {
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let d = try? JSONEncoder().encode(saved) { try? d.write(to: file, options: .atomic) }
     }
+
+    private struct Version: Codable { var version: Int? }
 
     // MARK: Reading
 
@@ -52,31 +61,33 @@ final class Collections {
         return s
     }
 
-    func inCollection(_ e: LibraryEntry) -> Bool { seriesID(e) != nil }
+    /// Series with 2+ of their films in the Library.
+    private func formed(_ entries: [LibraryEntry]) -> [String: Int] {
+        var n: [String: Int] = [:]
+        for e in entries { if let s = seriesID(e) { n[s, default: 0] += 1 } }
+        return n.filter { $0.value >= 2 }
+    }
 
-    /// Collections with at least one film in the Library, by name.
+    /// True when the film's series has 2+ films in the Library (then it lives on the Collections tab).
+    func inCollection(_ e: LibraryEntry, among entries: [LibraryEntry]) -> Bool {
+        guard let s = seriesID(e) else { return false }
+        return formed(entries)[s] != nil
+    }
+
+    /// Collections you have 2+ films of, by name.
     func collections(in entries: [LibraryEntry]) -> [FilmCollection] {
-        let ids = Set(entries.compactMap(seriesID))
-        return ids.compactMap { saved.series[$0] }
+        formed(entries).keys.compactMap { saved.series[$0] }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    /// The series in order: each film with your copy, or nil where you don't have it yet.
-    /// Your films that Wikidata's list missed are slotted in by year.
-    func lineup(_ c: FilmCollection, entries: [LibraryEntry]) -> [(member: FilmCollection.Member, entry: LibraryEntry?)] {
-        let mine = entries.filter { seriesID($0) == c.id }
-        var used = Set<String>()
-        var out: [(member: FilmCollection.Member, entry: LibraryEntry?)] = c.members.map { m in
-            let e = mine.first { saved.filmQID[$0.posterKey] == m.qid && !used.contains($0.id) }
-            if let e { used.insert(e.id) }
-            return (m, e)
+    /// Your films of a series, in the series' order (ones Wikidata's list missed go in by year).
+    func lineup(_ c: FilmCollection, entries: [LibraryEntry]) -> [LibraryEntry] {
+        let place = Dictionary(c.members.enumerated().map { ($1.qid, $0) }, uniquingKeysWith: { a, _ in a })
+        func key(_ e: LibraryEntry) -> (Int, Int) {
+            if let q = saved.filmQID[e.posterKey], let i = place[q] { return (c.members[i].year ?? e.year ?? 0, i) }
+            return (e.year ?? 0, Int.max)
         }
-        for e in mine where !used.contains(e.id) {
-            let m = FilmCollection.Member(qid: saved.filmQID[e.posterKey] ?? e.id, title: e.title, year: e.year)
-            let at = out.firstIndex { ($0.member.year ?? 0) > (e.year ?? 0) } ?? out.count
-            out.insert((m, e), at: at)
-        }
-        return out
+        return entries.filter { seriesID($0) == c.id }.sorted { key($0) < key($1) }
     }
 
     // MARK: Looking up
@@ -89,8 +100,9 @@ final class Collections {
         var changed = false
         for e in entries where !e.isShow && saved.filmSeries[e.posterKey] == nil {
             guard Date().timeIntervalSince(missedAt[e.posterKey] ?? .distantPast) > 3600 else { continue }
-            guard let sum = await LibraryStore.wikiPage(e, needImage: false),
-                  let qid = sum["wikibase_item"] as? String else {
+            var known = saved.filmQID[e.posterKey]
+            if known == nil, let sum = await LibraryStore.wikiPage(e, needImage: false) { known = sum["wikibase_item"] as? String }
+            guard let qid = known else {
                 missedAt[e.posterKey] = Date()
                 continue
             }
@@ -102,8 +114,11 @@ final class Collections {
                     c = await Collections.series(sid)
                     if let c { saved.series[sid] = c }
                 }
-                // A real series has 2+ films; of several (Phase Four / the whole MCU), the bigger one.
-                if let c, c.members.count >= 2, c.members.count > (best?.members.count ?? 0) { best = c }
+                // A real series has 2+ films. Shared universes (the MCU, 39 films) aren't collections
+                // (user, 15 Nov); of several series, the most specific (smallest) one wins.
+                guard let c, c.members.count >= 2, c.members.count <= 30,
+                      !c.name.localizedCaseInsensitiveContains("universe") else { continue }
+                if best == nil || c.members.count < best!.members.count { best = c }
             }
             saved.filmSeries[e.posterKey] = best?.id ?? ""
             changed = true
