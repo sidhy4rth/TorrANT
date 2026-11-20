@@ -281,6 +281,13 @@ final class Colony {
     /// The item stays in uploads.json until Drive has it, so a failed or interrupted upload
     /// (network gone, app quit, Mac restarted) is tried again instead of sitting on the Mac.
     func autoSend(_ item: HillItem) async {
+        // One upload per item, whoever asks. A finished download and the 15-minute retry both
+        // land here, and the retry used to send a still-uploading film a second time because
+        // only the callers kept this list (Casino Royale went up twice, 20 Nov).
+        let id = item.id
+        guard !sendingUp.contains(id) else { return }
+        sendingUp.insert(id)
+        defer { sendingUp.remove(id) }
         let keep = !Uploader.shared.straightToDrive
         markForUpload(item.id, true)
         guard Uploader.shared.ready else {
@@ -340,11 +347,7 @@ final class Colony {
             guard FileManager.default.fileExists(atPath: item.path) else { markForUpload(id, false); continue }
             guard !sendingUp.contains(id), carrying[id] == nil, unpacking[id] == nil else { continue }
             say("Trying \(Titles.pretty(item.name)) again: it never made it to Drive")
-            sendingUp.insert(id)
-            Task {
-                await self.autoSend(item)
-                self.sendingUp.remove(id)
-            }
+            Task { await self.autoSend(item) }
         }
     }
 
@@ -676,9 +679,7 @@ final class Colony {
         // Google Drive for desktop restarts a whole file from 0 after any 5-second network
         // stall, so big movies (18-21 GB, 15 Nov) never finished on a Wi-Fi that drops now and then.
         if Uploader.shared.ready {
-            sendingUp.insert(item.id)
             await autoSend(item)
-            sendingUp.remove(item.id)
             return
         }
         guard driveDir != nil else { say(Colony.noDriveNote); return }
